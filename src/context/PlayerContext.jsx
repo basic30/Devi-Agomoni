@@ -275,21 +275,32 @@ export function PlayerProvider({ children }) {
           acquireAudioFocus();
           const player = getPlayer();
           if (player && typeof player.playVideo === 'function') {
-            try { player.playVideo(); } catch (e) {}
+            try { 
+              player.playVideo();
+              // Let the player's state change event update isPlaying
+              // Don't set it directly - wait for YouTube player to emit PLAYING state
+            } catch (e) {
+              console.warn('Error playing from notification:', e);
+              togglePlay();
+            }
           } else {
             togglePlay();
           }
-          setIsPlaying(true);
         });
 
         navigator.mediaSession.setActionHandler('pause', () => {
           const player = getPlayer();
           if (player && typeof player.pauseVideo === 'function') {
-            try { player.pauseVideo(); } catch (e) {}
+            try { 
+              player.pauseVideo();
+              // Let the player's state change event update isPlaying
+            } catch (e) {
+              console.warn('Error pausing from notification:', e);
+              togglePlay();
+            }
           } else {
             togglePlay();
           }
-          setIsPlaying(false);
         });
 
         navigator.mediaSession.setActionHandler('previoustrack', null);
@@ -310,16 +321,24 @@ export function PlayerProvider({ children }) {
   }, [currentTrack, isPlaying, playlistKey, duration]);
 
   useEffect(() => {
-    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
-      const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
-      if (calcDur > 0 && currentTime >= 0) {
-        try {
-          navigator.mediaSession.setPositionState({
-            duration: calcDur,
-            playbackRate: isPlaying ? 1 : 0,
-            position: Math.min(currentTime, calcDur),
-          });
-        } catch (e) {}
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        // Update playback state
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+        
+        // Update position state if available
+        if ('setPositionState' in navigator.mediaSession) {
+          const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
+          if (calcDur > 0 && currentTime >= 0) {
+            navigator.mediaSession.setPositionState({
+              duration: calcDur,
+              playbackRate: isPlaying ? 1 : 0,
+              position: Math.min(currentTime, calcDur),
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Error updating mediaSession state:', e);
       }
     }
   }, [currentTime, duration, currentTrack, isPlaying]);
