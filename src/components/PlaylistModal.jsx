@@ -70,7 +70,7 @@ export function PlaylistModal({ open, onClose }) {
     if (!open) return;
     const pl = playlists[selectedTab];
     if (pl && pl.sourceType === 'youtube_playlist' && pl.youtubePlaylistId) {
-      fetchLiveYouTubePlaylist(pl.youtubePlaylistId).then((liveTracks) => {
+      fetchLiveYouTubePlaylist(pl.youtubePlaylistId, pl.tracks).then((liveTracks) => {
         if (liveTracks && liveTracks.length > 0) {
           setDynamicTracks((prev) => ({
             ...prev,

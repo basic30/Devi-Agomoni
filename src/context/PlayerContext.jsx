@@ -130,6 +130,7 @@ export function PlayerProvider({ children }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playlistVersion, setPlaylistVersion] = useState(0);
 
   const containerRef = useRef(null);
   const currentVideoIdRef = useRef(null);
@@ -187,6 +188,71 @@ export function PlayerProvider({ children }) {
     }
   }, [isPlaying]);
 
+  async function syncLivePlaylistFromPlayer(player) {
+    if (!player || typeof player.getPlaylist !== 'function') return;
+    try {
+      const videoIds = player.getPlaylist();
+      if (!Array.isArray(videoIds) || videoIds.length === 0) return;
+
+      const pKey = activePlaylistKeyRef.current;
+      const pl = playlists[pKey];
+      if (!pl || !pl.tracks) return;
+
+      const existingMap = new Map(pl.tracks.map((t) => [t.videoId, t]));
+      const missingIds = videoIds.filter((id) => id && !existingMap.has(id));
+
+      if (missingIds.length === 0) return;
+
+      // Fetch oEmbed details for any newly added songs in YouTube playlist
+      const fetchedNewTracks = await Promise.all(
+        missingIds.map(async (vId) => {
+          try {
+            const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${vId}&format=json`);
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            return {
+              id: `yt-${vId}`,
+              title: data.title || 'YouTube Track',
+              subtitle: data.author_name || 'YouTube Music',
+              videoId: vId,
+              durationLabel: 'YouTube Track',
+              sourceUrl: `https://www.youtube.com/watch?v=${vId}`,
+            };
+          } catch (e) {
+            return {
+              id: `yt-${vId}`,
+              title: 'YouTube Track',
+              subtitle: 'YouTube Music',
+              videoId: vId,
+              durationLabel: 'YouTube Track',
+              sourceUrl: `https://www.youtube.com/watch?v=${vId}`,
+            };
+          }
+        })
+      );
+
+      const allTrackMap = new Map([
+        ...pl.tracks.map((t) => [t.videoId, t]),
+        ...fetchedNewTracks.map((t) => [t.videoId, t]),
+      ]);
+
+      const orderedTracks = videoIds
+        .map((vId) => allTrackMap.get(vId))
+        .filter(Boolean);
+
+      pl.tracks.forEach((t) => {
+        if (!orderedTracks.some((ot) => ot.videoId === t.videoId)) {
+          orderedTracks.push(t);
+        }
+      });
+
+      pl.tracks = orderedTracks;
+      setPlaylistVersion((v) => v + 1);
+    } catch (e) {
+      console.warn('Error syncing live playlist from player:', e);
+    }
+  }
+
   useEffect(() => {
     globalReadyHandler = (player) => {
       if (pendingActionRef.current) {
@@ -194,6 +260,7 @@ export function PlayerProvider({ children }) {
         pendingActionRef.current = null;
         executePlayAction(action.pKey, action.tIndex, action.autoplay, player);
       }
+      syncLivePlaylistFromPlayer(player);
     };
 
     globalStateChangeHandler = (event) => {
@@ -203,6 +270,7 @@ export function PlayerProvider({ children }) {
         setIsPlaying(true);
         acquireAudioFocus();
         syncPlaylistTrackIndex(player);
+        syncLivePlaylistFromPlayer(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
         if (document.hidden && isPlayingRef.current) {
           acquireAudioFocus();
@@ -538,7 +606,7 @@ export function PlayerProvider({ children }) {
       togglePlay,
       seekTo,
     }),
-    [playlistKey, currentPlaylist, trackIndex, currentTrack, isPlaying, currentTime, calcDuration, canSkip]
+    [playlistKey, currentPlaylist, trackIndex, currentTrack, isPlaying, currentTime, calcDuration, canSkip, playlistVersion]
   );
 
   return (

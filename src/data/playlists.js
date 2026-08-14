@@ -139,6 +139,38 @@ export const playlists = {oldPujoSongs: {
         "videoId": "nLtIsV21ABw",
         "durationLabel": "YouTube Track",
         "sourceUrl": "https://www.youtube.com/watch?v=nLtIsV21ABw"
+    },
+    {
+        "id": "yt-uGlcRp0xJIo",
+        "title": "Nayan Sarasi Keno Bhoreche Jaale",
+        "subtitle": "Kishore Kumar - Topic",
+        "videoId": "uGlcRp0xJIo",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=uGlcRp0xJIo"
+    },
+    {
+        "id": "yt-uKW3hzB0mCo",
+        "title": "Hoyto Tomari Janya",
+        "subtitle": "Manna Dey - Topic",
+        "videoId": "uKW3hzB0mCo",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=uKW3hzB0mCo"
+    },
+    {
+        "id": "yt-pbtQuXJmsOU",
+        "title": "Ami Cheye Cheye Dekhi",
+        "subtitle": "Shyamal Mitra - Topic",
+        "videoId": "pbtQuXJmsOU",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=pbtQuXJmsOU"
+    },
+    {
+        "id": "yt-MgRe-FltkYo",
+        "title": "Tabo Achintya Rupa-charita-mahima",
+        "subtitle": "Manabendra Mukherjee - Topic",
+        "videoId": "MgRe-FltkYo",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=MgRe-FltkYo"
     }
 ]
   },
