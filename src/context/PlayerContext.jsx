@@ -17,6 +17,32 @@ let isPlayerReady = false;
 let globalStateChangeHandler = null;
 let globalReadyHandler = null;
 
+// Silent 1-second audio loop base64 (Unlocks Mobile OS Audio Session in background)
+const SILENT_AUDIO_WAV = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+let mobileSilentAudio = null;
+
+function enableMobileAudioLock() {
+  if (typeof window === 'undefined') return;
+  if (!mobileSilentAudio) {
+    try {
+      mobileSilentAudio = new Audio(SILENT_AUDIO_WAV);
+      mobileSilentAudio.loop = true;
+      mobileSilentAudio.volume = 0.01;
+    } catch (e) {}
+  }
+  if (mobileSilentAudio) {
+    mobileSilentAudio.play().catch(() => {});
+  }
+}
+
+function disableMobileAudioLock() {
+  if (mobileSilentAudio) {
+    try {
+      mobileSilentAudio.pause();
+    } catch (e) {}
+  }
+}
+
 function loadYouTubeIframeApi() {
   if (window.YT && window.YT.Player) {
     return Promise.resolve(window.YT);
@@ -89,6 +115,7 @@ export function PlayerProvider({ children }) {
   const currentVideoIdRef = useRef(null);
   const activePlaylistKeyRef = useRef(playlistKey);
   const trackIndexRef = useRef(trackIndex);
+  const isPlayingRef = useRef(isPlaying);
   const nextTrackHandlerRef = useRef(() => {});
   const pendingActionRef = useRef(null);
 
@@ -105,6 +132,15 @@ export function PlayerProvider({ children }) {
   }, [trackIndex]);
 
   useEffect(() => {
+    isPlayingRef.current = isPlaying;
+    if (isPlaying) {
+      enableMobileAudioLock();
+    } else {
+      disableMobileAudioLock();
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
     globalReadyHandler = (player) => {
       if (pendingActionRef.current) {
         const action = pendingActionRef.current;
@@ -118,9 +154,17 @@ export function PlayerProvider({ children }) {
 
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
+        enableMobileAudioLock();
         syncPlaylistTrackIndex(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        setIsPlaying(false);
+        // Ignore automatic OS pause if screen minimized while playing
+        if (document.hidden && isPlayingRef.current) {
+          if (player && typeof player.playVideo === 'function') {
+            try { player.playVideo(); } catch (e) {}
+          }
+        } else {
+          setIsPlaying(false);
+        }
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
         const pl = playlists[activePlaylistKeyRef.current];
@@ -142,6 +186,26 @@ export function PlayerProvider({ children }) {
     }
   }, []);
 
+  // Mobile Visibility Change Handler (Screen off / Minimize tab)
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.hidden && isPlayingRef.current) {
+        enableMobileAudioLock();
+        const player = getPlayer();
+        if (player && typeof player.playVideo === 'function') {
+          try {
+            player.playVideo();
+          } catch (e) {}
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
   // Helper to sync YouTube's internal playlist index with React state
   function syncPlaylistTrackIndex(player) {
     if (!player) return;
@@ -158,7 +222,7 @@ export function PlayerProvider({ children }) {
     } catch (e) {}
   }
 
-  // Background Playback & MediaSession API (Notification & Lockscreen Controls)
+  // Background Playback & MediaSession API (Lockscreen & Notification Controls)
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
@@ -184,6 +248,7 @@ export function PlayerProvider({ children }) {
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
 
         navigator.mediaSession.setActionHandler('play', () => {
+          enableMobileAudioLock();
           togglePlay();
         });
         navigator.mediaSession.setActionHandler('pause', () => {
@@ -200,6 +265,22 @@ export function PlayerProvider({ children }) {
       }
     }
   }, [currentTrack, isPlaying, playlistKey]);
+
+  // Sync MediaSession position state for lockscreen progress bar
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+      const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
+      if (calcDur > 0) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: calcDur,
+            playbackRate: 1,
+            position: Math.min(currentTime, calcDur),
+          });
+        } catch (e) {}
+      }
+    }
+  }, [currentTime, duration, currentTrack]);
 
   // Time update loop
   useEffect(() => {
@@ -231,6 +312,8 @@ export function PlayerProvider({ children }) {
   function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
     const player = playerInstance || getPlayer();
     if (!player) return;
+
+    enableMobileAudioLock();
 
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
@@ -290,6 +373,7 @@ export function PlayerProvider({ children }) {
   }
 
   function playTrackAt(pKey, tIndex, { autoplay }) {
+    enableMobileAudioLock();
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
       pendingActionRef.current = { pKey, tIndex, autoplay };
@@ -311,12 +395,14 @@ export function PlayerProvider({ children }) {
   }
 
   function selectTrack(pKey, tIndex) {
+    enableMobileAudioLock();
     setPlaylistKey(pKey);
     setTrackIndex(tIndex);
     playTrackAt(pKey, tIndex, { autoplay: true });
   }
 
   function goNext() {
+    enableMobileAudioLock();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -327,6 +413,7 @@ export function PlayerProvider({ children }) {
   }
 
   function goPrev() {
+    enableMobileAudioLock();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -341,6 +428,7 @@ export function PlayerProvider({ children }) {
   });
 
   function togglePlay() {
+    enableMobileAudioLock();
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
       playTrackAt(playlistKey, trackIndex, { autoplay: true });

@@ -1,118 +1,141 @@
 import { useState, useEffect } from 'react';
-import { getTimePartsInIST } from './useTimeOfDay';
 
-const MIN_ONLINE = 201;
-const MAX_ONLINE = 275;
-
-function getHourRange(hour) {
-  if (hour >= 0 && hour < 3) return [255, 275];
-  if (hour >= 3 && hour < 4) return [225, 245];
-  if (hour >= 4 && hour < 6) return [201, 220];
-  if (hour >= 6 && hour < 12) return [220, 245];
-  if (hour >= 12 && hour < 16) return [210, 235];
-  if (hour >= 16 && hour < 20) return [235, 258];
-  return [250, 270];
-}
-
-function clamp(val) {
-  return Math.min(MAX_ONLINE, Math.max(MIN_ONLINE, val));
-}
-
-function getRandomInRange([min, max]) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+// Get or generate a unique persistent client ID for this device session
+function getSessionClientId() {
+  if (typeof window === 'undefined') return 'server';
+  let id = sessionStorage.getItem('devipaksha_client_id');
+  if (!id) {
+    id = 'device-' + Math.random().toString(36).substring(2, 9) + '-' + Date.now().toString(36);
+    sessionStorage.setItem('devipaksha_client_id', id);
+  }
+  return id;
 }
 
 export function usePresence() {
-  const [localTabCount, setLocalTabCount] = useState(1);
-  const [globalCount, setGlobalCount] = useState(() => {
-    const { hour } = getTimePartsInIST();
-    return getRandomInRange(getHourRange(hour));
-  });
+  const [onlineCount, setOnlineCount] = useState(1);
 
-  // Track active local browser tabs via BroadcastChannel
   useEffect(() => {
-    if (typeof BroadcastChannel === 'undefined') return;
+    if (typeof window === 'undefined') return;
 
-    const channel = new BroadcastChannel('devipaksha_presence_channel');
-    const myTabId = Math.random().toString(36).substring(2, 9);
-    const activeTabs = new Map();
-    activeTabs.set(myTabId, Date.now());
+    const clientId = getSessionClientId();
+    const activeClients = new Map();
+    activeClients.set(clientId, Date.now());
 
-    function pingOthers() {
-      channel.postMessage({ type: 'PING', tabId: myTabId, time: Date.now() });
+    // 1. BroadcastChannel for local tabs on the same device
+    let bc = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        bc = new BroadcastChannel('devipaksha_global_presence_v3');
+      } catch (e) {}
     }
 
-    function cleanStaleTabs() {
+    // 2. Global WebSocket connection for different phones/devices across the internet
+    let ws = null;
+    const wsUrl = 'wss://free.piesocket.com/v3/devipaksha_global_presence_v3?api_key=VC44WJhWuMVAf92a02EKaJGqqwrvaJuTBelgUQXi&notify_self=1';
+
+    function connectWebSocket() {
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          sendPing();
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handlePresenceMessage(data);
+          } catch (e) {}
+        };
+
+        ws.onclose = () => {
+          setTimeout(connectWebSocket, 3000);
+        };
+
+        ws.onerror = () => {
+          try { ws.close(); } catch (e) {}
+        };
+      } catch (e) {}
+    }
+
+    connectWebSocket();
+
+    if (bc) {
+      bc.onmessage = (event) => {
+        if (event.data) {
+          handlePresenceMessage(event.data);
+        }
+      };
+    }
+
+    function handlePresenceMessage(data) {
+      if (!data || !data.clientId) return;
+
       const now = Date.now();
-      for (const [id, lastSeen] of activeTabs.entries()) {
-        if (now - lastSeen > 4000) {
-          activeTabs.delete(id);
+      if (data.type === 'PRESENCE_PING' || data.type === 'PRESENCE_PONG') {
+        activeClients.set(data.clientId, now);
+        if (data.type === 'PRESENCE_PING' && data.clientId !== clientId) {
+          broadcastMessage({ type: 'PRESENCE_PONG', clientId, timestamp: now });
+        }
+      } else if (data.type === 'PRESENCE_BYE') {
+        activeClients.delete(data.clientId);
+      }
+
+      updateCount();
+    }
+
+    function broadcastMessage(msg) {
+      const payload = JSON.stringify(msg);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(payload); } catch (e) {}
+      }
+      if (bc) {
+        try { bc.postMessage(msg); } catch (e) {}
+      }
+    }
+
+    function sendPing() {
+      const now = Date.now();
+      activeClients.set(clientId, now);
+      broadcastMessage({ type: 'PRESENCE_PING', clientId, timestamp: now });
+      updateCount();
+    }
+
+    function updateCount() {
+      const now = Date.now();
+      for (const [id, lastSeen] of activeClients.entries()) {
+        if (now - lastSeen > 6000) {
+          activeClients.delete(id);
         }
       }
-      setLocalTabCount(activeTabs.size);
+      setOnlineCount(Math.max(1, activeClients.size));
     }
 
-    channel.onmessage = (event) => {
-      if (!event.data) return;
-      if (event.data.type === 'PING') {
-        activeTabs.set(event.data.tabId, event.data.time);
-        setLocalTabCount(activeTabs.size);
-      } else if (event.data.type === 'BYE') {
-        activeTabs.delete(event.data.tabId);
-        setLocalTabCount(activeTabs.size);
-      }
-    };
-
-    pingOthers();
-    const intervalId = setInterval(() => {
-      pingOthers();
-      cleanStaleTabs();
-    }, 1500);
+    sendPing();
+    const interval = setInterval(sendPing, 2500);
 
     function onUnload() {
-      channel.postMessage({ type: 'BYE', tabId: myTabId });
-      channel.close();
+      broadcastMessage({ type: 'PRESENCE_BYE', clientId });
+      if (ws) {
+        try { ws.close(); } catch (e) {}
+      }
+      if (bc) {
+        try { bc.close(); } catch (e) {}
+      }
     }
 
     window.addEventListener('beforeunload', onUnload);
 
     return () => {
-      clearInterval(intervalId);
+      clearInterval(interval);
       window.removeEventListener('beforeunload', onUnload);
-      channel.close();
+      onUnload();
     };
   }, []);
 
-  // Organic simulated fluctuation for global counter
-  useEffect(() => {
-    let timerId;
-
-    function scheduleNext() {
-      const delay = (5 + Math.random() * 10) * 1000;
-      timerId = setTimeout(() => {
-        setGlobalCount(prev => {
-          const { hour } = getTimePartsInIST();
-          const [min, max] = getHourRange(hour);
-          const stepSize = Math.random() < 0.85 ? (1 + Math.floor(Math.random() * 2)) : 3;
-          let delta = Math.random() < 0.5 ? -stepSize : stepSize;
-
-          if (prev < min) delta = Math.abs(delta);
-          if (prev > max) delta = -Math.abs(delta);
-
-          return clamp(prev + delta);
-        });
-        scheduleNext();
-      }, delay);
-    }
-
-    scheduleNext();
-    return () => clearTimeout(timerId);
-  }, []);
-
-  // Return local active tabs count (or global count if specified)
   return {
-    count: localTabCount,
-    localCount: localTabCount,
-    globalCount: globalCount
+    count: onlineCount,
+    localCount: onlineCount,
+    globalCount: onlineCount
   };
 }
