@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { playlists, PLAYLIST_KEYS } from '../data/playlists';
 import { createBackgroundHeartbeatWorker } from '../utils/backgroundWorker';
+import { fetchLiveYouTubePlaylist } from '../utils/playlistFetcher';
 
 const PlayerContext = createContext(null);
 
@@ -187,6 +188,20 @@ export function PlayerProvider({ children }) {
       workerRef.current?.stop();
     }
   }, [isPlaying]);
+
+  // Eagerly auto-sync live YouTube Music playlists in background on app load
+  useEffect(() => {
+    Object.values(playlists).forEach((pl) => {
+      if (pl.sourceType === 'youtube_playlist' && pl.youtubePlaylistId) {
+        fetchLiveYouTubePlaylist(pl.youtubePlaylistId, pl.tracks).then((liveTracks) => {
+          if (liveTracks && liveTracks.length > 0) {
+            pl.tracks = liveTracks;
+            setPlaylistVersion((v) => v + 1);
+          }
+        });
+      }
+    });
+  }, []);
 
   async function syncLivePlaylistFromPlayer(player) {
     if (!player || typeof player.getPlaylist !== 'function') return;
