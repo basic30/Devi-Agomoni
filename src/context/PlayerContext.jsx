@@ -19,58 +19,17 @@ let isPlayerReady = false;
 let globalStateChangeHandler = null;
 let globalReadyHandler = null;
 
-// Dynamically generate a valid 1-second silent WAV PCM audio Data URL
-// This grants native Mobile OS Audio Focus & keeps lock screen media sessions active
-function generateSilentWavDataUrl() {
-  const sampleRate = 44100;
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const durationSec = 1;
-  const numSamples = sampleRate * durationSec;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = numSamples * blockAlign;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  /* RIFF header */
-  view.setUint32(0, 0x52494646, false); // "RIFF"
-  view.setUint32(4, 36 + dataSize, true);
-  view.setUint32(8, 0x57415645, false); // "WAVE"
-  /* fmt chunk */
-  view.setUint32(12, 0x666d7420, false); // "fmt "
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitsPerSample, true);
-  /* data chunk */
-  view.setUint32(36, 0x64617461, false); // "data"
-  view.setUint32(40, dataSize, true);
-
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return 'data:audio/wav;base64,' + btoa(binary);
-}
-
-let silentAudioDataUrl = null;
+// Silent WAV audio loop base64 (Grants Mobile OS Audio Focus & keeps Notification Bar visible)
+const SILENT_AUDIO_WAV = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 let audioFocusElement = null;
 
 function acquireAudioFocus() {
   if (typeof window === 'undefined') return;
   try {
-    if (!silentAudioDataUrl) {
-      silentAudioDataUrl = generateSilentWavDataUrl();
-    }
     if (!audioFocusElement) {
-      audioFocusElement = new Audio(silentAudioDataUrl);
+      audioFocusElement = new Audio(SILENT_AUDIO_WAV);
       audioFocusElement.loop = true;
-      audioFocusElement.volume = 0.01;
+      audioFocusElement.volume = 0.05;
     }
     audioFocusElement.play().catch(() => {});
   } catch (e) {}
@@ -103,6 +62,16 @@ function loadYouTubeIframeApi() {
   return ytApiPromise;
 }
 
+// Eagerly pre-initialize audioFocusElement & preload YouTube API on module load
+if (typeof window !== 'undefined') {
+  try {
+    audioFocusElement = new Audio(SILENT_AUDIO_WAV);
+    audioFocusElement.loop = true;
+    audioFocusElement.volume = 0.05;
+  } catch (e) {}
+  loadYouTubeIframeApi();
+}
+
 function initPlayer(element) {
   if (ytPlayerInstance && isPlayerReady) return Promise.resolve(ytPlayerInstance);
 
@@ -110,8 +79,8 @@ function initPlayer(element) {
     return new Promise((resolve) => {
       new YT.Player(element, {
         host: 'https://www.youtube-nocookie.com',
-        width: '100%',
-        height: '100%',
+        width: '200',
+        height: '200',
         playerVars: {
           controls: 0,
           disablekb: 1,
@@ -129,8 +98,9 @@ function initPlayer(element) {
             try {
               const iframe = element.querySelector('iframe') || (element.tagName === 'IFRAME' ? element : null);
               if (iframe) {
-                iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+                iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; accelerometer; clipboard-write; gyroscope');
                 iframe.setAttribute('playsinline', '1');
+                iframe.setAttribute('webkit-playsinline', '1');
               }
             } catch (e) {}
 
@@ -168,30 +138,29 @@ export function PlayerProvider({ children }) {
   const isPlayingRef = useRef(isPlaying);
   const nextTrackHandlerRef = useRef(() => {});
   const pendingActionRef = useRef(null);
-  const workerRef = useRef(null);
 
   const currentPlaylist = playlists[playlistKey] || playlists[PLAYLIST_KEYS[0]];
   const tracks = currentPlaylist?.tracks || [];
   const currentTrack = tracks[trackIndex] ?? tracks[0] ?? {};
 
-  // Background Web Worker heartbeat to prevent JS main thread throttling on mobile screen off
+  const workerRef = useRef(null);
+
+  // Background Web Worker heartbeat (prevents main thread timer throttling on Android Chrome screen off)
   useEffect(() => {
     workerRef.current = createBackgroundHeartbeatWorker(() => {
-      const player = getPlayer();
-      if (!player) return;
-
       if (isPlayingRef.current) {
         acquireAudioFocus();
-        try {
-          if (typeof player.getPlayerState === 'function') {
+        const player = getPlayer();
+        if (player && typeof player.getPlayerState === 'function') {
+          try {
             const state = player.getPlayerState();
             if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED) {
               if (typeof player.playVideo === 'function') {
                 player.playVideo();
               }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
       }
     });
 
@@ -214,32 +183,8 @@ export function PlayerProvider({ children }) {
       acquireAudioFocus();
       workerRef.current?.start();
     } else {
-      releaseAudioFocus();
       workerRef.current?.stop();
     }
-  }, [isPlaying]);
-
-  // Screen Wake Lock API to prevent CPU sleep during active playback
-  useEffect(() => {
-    let wakeLock = null;
-
-    async function requestWakeLock() {
-      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && isPlaying) {
-        try {
-          wakeLock = await navigator.wakeLock.request('screen');
-        } catch (err) {}
-      }
-    }
-
-    if (isPlaying) {
-      requestWakeLock();
-    }
-
-    return () => {
-      if (wakeLock) {
-        try { wakeLock.release(); } catch (e) {}
-      }
-    };
   }, [isPlaying]);
 
   useEffect(() => {
@@ -257,28 +202,21 @@ export function PlayerProvider({ children }) {
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
         acquireAudioFocus();
-        workerRef.current?.start();
         syncPlaylistTrackIndex(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        // If mobile OS attempted to pause because tab is minimized / screen is locked, auto-resume
         if (document.hidden && isPlayingRef.current) {
           acquireAudioFocus();
-          if (player && typeof player.playVideo === 'function') {
-            setTimeout(() => {
-              try {
-                if (isPlayingRef.current) player.playVideo();
-              } catch (e) {}
-            }, 50);
-          }
-        } else if (!document.hidden) {
+          setTimeout(() => {
+            const p = getPlayer();
+            if (p && typeof p.playVideo === 'function') {
+              try { p.playVideo(); } catch (e) {}
+            }
+          }, 60);
+        } else {
           setIsPlaying(false);
-          releaseAudioFocus();
-          workerRef.current?.stop();
         }
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
-        releaseAudioFocus();
-        workerRef.current?.stop();
         const pl = playlists[activePlaylistKeyRef.current];
         if (pl) {
           nextTrackHandlerRef.current();
@@ -298,36 +236,6 @@ export function PlayerProvider({ children }) {
     }
   }, []);
 
-  // When returning to website or unlocking screen, auto-resume if expected to play
-  useEffect(() => {
-    function handleVisibilityChange() {
-      if (!document.hidden && isPlayingRef.current) {
-        acquireAudioFocus();
-        const player = getPlayer();
-        if (player && typeof player.playVideo === 'function') {
-          try {
-            if (typeof player.getPlayerState === 'function') {
-              const state = player.getPlayerState();
-              if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED) {
-                player.playVideo();
-              }
-            }
-          } catch (e) {}
-        }
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pageshow', handleVisibilityChange);
-    window.addEventListener('focus', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pageshow', handleVisibilityChange);
-      window.removeEventListener('focus', handleVisibilityChange);
-    };
-  }, []);
-
-  // Sync YouTube playlist index with React state
   function syncPlaylistTrackIndex(player) {
     if (!player) return;
     try {
@@ -343,7 +251,6 @@ export function PlayerProvider({ children }) {
     } catch (e) {}
   }
 
-  // MediaSession API for Lockscreen and Notification Bar controls
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
@@ -357,11 +264,7 @@ export function PlayerProvider({ children }) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: title,
           artist: artist,
-          album: 'দেবীপক্ষ — Devi Paksha',
           artwork: [
-            { src: coverUrl, sizes: '96x96', type: 'image/jpeg' },
-            { src: coverUrl, sizes: '128x128', type: 'image/jpeg' },
-            { src: coverUrl, sizes: '192x192', type: 'image/jpeg' },
             { src: coverUrl, sizes: '512x512', type: 'image/jpeg' },
           ],
         });
@@ -372,7 +275,7 @@ export function PlayerProvider({ children }) {
           acquireAudioFocus();
           const player = getPlayer();
           if (player && typeof player.playVideo === 'function') {
-            player.playVideo();
+            try { player.playVideo(); } catch (e) {}
           } else {
             togglePlay();
           }
@@ -382,22 +285,15 @@ export function PlayerProvider({ children }) {
         navigator.mediaSession.setActionHandler('pause', () => {
           const player = getPlayer();
           if (player && typeof player.pauseVideo === 'function') {
-            player.pauseVideo();
+            try { player.pauseVideo(); } catch (e) {}
           } else {
             togglePlay();
           }
           setIsPlaying(false);
-          releaseAudioFocus();
-          workerRef.current?.stop();
         });
 
-        navigator.mediaSession.setActionHandler('previoustrack', () => {
-          goPrev();
-        });
-
-        navigator.mediaSession.setActionHandler('nexttrack', () => {
-          goNext();
-        });
+        navigator.mediaSession.setActionHandler('previoustrack', null);
+        navigator.mediaSession.setActionHandler('nexttrack', null);
 
         navigator.mediaSession.setActionHandler('seekto', (details) => {
           if (details.seekTime != null) {
@@ -413,7 +309,6 @@ export function PlayerProvider({ children }) {
     }
   }, [currentTrack, isPlaying, playlistKey, duration]);
 
-  // Sync lockscreen position state
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
       const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
@@ -429,7 +324,6 @@ export function PlayerProvider({ children }) {
     }
   }, [currentTime, duration, currentTrack, isPlaying]);
 
-  // Time update loop
   useEffect(() => {
     if (!isPlaying) return;
 
@@ -439,7 +333,6 @@ export function PlayerProvider({ children }) {
 
       try {
         syncPlaylistTrackIndex(player);
-
         const rawTime = player.getCurrentTime();
         const startTime = currentTrack.start ?? 0;
         const elapsedTime = Math.max(0, rawTime - startTime);
@@ -636,13 +529,11 @@ export function PlayerProvider({ children }) {
         ref={containerRef}
         style={{
           position: 'fixed',
-          bottom: '-100px',
-          right: '-100px',
-          width: '1px',
-          height: '1px',
-          opacity: 0.01,
-          pointerEvents: 'none',
-          zIndex: -500,
+          top: -9999,
+          left: -9999,
+          width: 1,
+          height: 1,
+          opacity: 0,
         }}
         aria-hidden="true"
       />
