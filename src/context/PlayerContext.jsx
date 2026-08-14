@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { playlists, PLAYLIST_KEYS } from '../data/playlists';
-import { createBackgroundHeartbeatWorker } from '../utils/backgroundWorker';
 
 const PlayerContext = createContext(null);
 
@@ -19,19 +18,90 @@ let isPlayerReady = false;
 let globalStateChangeHandler = null;
 let globalReadyHandler = null;
 
+// Improved silent audio implementation for better browser compatibility
+// This creates a small silent MP3/WAV that grants audio focus on mobile
+const SILENT_AUDIO_DATA = () => {
+  // Create a silent audio using Web Audio API as fallback
+  try {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = audioContext.createBuffer(2, audioContext.sampleRate * 0.5, audioContext.sampleRate);
+    const blob = new Blob([audioBuffer], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    // Fallback: return data URL for silent WAV
+    return 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==';
+  }
+};
+
+let audioFocusElement = null;
+let audioFocusActive = false;
+
+function acquireAudioFocus() {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!audioFocusElement) {
+      const audioData = SILENT_AUDIO_DATA();
+      audioFocusElement = new Audio(audioData);
+      audioFocusElement.loop = true;
+      audioFocusElement.muted = false;
+      audioFocusElement.volume = 0.01; // Very low volume - just for audio focus
+      audioFocusElement.preload = 'auto';
+    }
+    if (!audioFocusActive) {
+      const playPromise = audioFocusElement.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          audioFocusActive = true;
+          console.log('Audio focus acquired');
+        }).catch((err) => {
+          console.warn('Could not acquire audio focus:', err.message);
+        });
+      } else {
+        audioFocusActive = true;
+      }
+    }
+  } catch (e) {
+    console.warn('Error acquiring audio focus:', e);
+  }
+}
+
+function releaseAudioFocus() {
+  if (audioFocusElement && audioFocusActive) {
+    try {
+      audioFocusElement.pause();
+      audioFocusElement.currentTime = 0;
+      audioFocusActive = false;
+      console.log('Audio focus released');
+    } catch (e) {
+      console.warn('Error releasing audio focus:', e);
+    }
+  }
+}
+
 function loadYouTubeIframeApi() {
   if (window.YT && window.YT.Player) {
     return Promise.resolve(window.YT);
   }
   if (!ytApiPromise) {
-    ytApiPromise = new Promise((resolve) => {
+    ytApiPromise = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('YouTube API failed to load within 15 seconds'));
+      }, 15000);
+
       const prevCallback = window.onYouTubeIframeAPIReady;
       window.onYouTubeIframeAPIReady = () => {
+        clearTimeout(timeout);
         if (prevCallback) prevCallback();
         resolve(window.YT);
       };
+
       const script = document.createElement('script');
       script.src = 'https://www.youtube.com/iframe_api';
+      script.async = true;
+      script.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('Failed to load YouTube API script'));
+      };
       document.head.appendChild(script);
     });
   }
@@ -42,37 +112,51 @@ function initPlayer(element) {
   if (ytPlayerInstance && isPlayerReady) return Promise.resolve(ytPlayerInstance);
 
   return loadYouTubeIframeApi().then((YT) => {
-    return new Promise((resolve) => {
-      new YT.Player(element, {
-        host: 'https://www.youtube-nocookie.com',
-        width: '64',
-        height: '64',
-        playerVars: {
-          controls: 0,
-          disablekb: 1,
-          playsinline: 1,
-          rel: 0,
-          modestbranding: 1,
-          enablejsapi: 1,
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: (event) => {
-            ytPlayerInstance = event.target;
-            isPlayerReady = true;
-            if (globalReadyHandler) {
-              globalReadyHandler(event.target);
-            }
-            resolve(event.target);
+    return new Promise((resolve, reject) => {
+      try {
+        new YT.Player(element, {
+          host: 'https://www.youtube-nocookie.com',
+          width: '300',
+          height: '300',
+          playerVars: {
+            controls: 0,
+            disablekb: 1,
+            playsinline: 1,
+            rel: 0,
+            modestbranding: 1,
+            enablejsapi: 1,
+            origin: window.location.origin,
+            autoplay: 1,
           },
-          onStateChange: (event) => {
-            if (globalStateChangeHandler) {
-              globalStateChangeHandler(event);
-            }
+          events: {
+            onReady: (event) => {
+              ytPlayerInstance = event.target;
+              isPlayerReady = true;
+              console.log('YouTube player ready');
+              if (globalReadyHandler) {
+                globalReadyHandler(event.target);
+              }
+              resolve(event.target);
+            },
+            onError: (event) => {
+              console.error('YouTube player error:', event.data);
+              reject(new Error(`YouTube player error: ${event.data}`));
+            },
+            onStateChange: (event) => {
+              if (globalStateChangeHandler) {
+                globalStateChangeHandler(event);
+              }
+            },
           },
-        },
-      });
+        });
+      } catch (err) {
+        console.error('Error initializing YouTube player:', err);
+        reject(err);
+      }
     });
+  }).catch((err) => {
+    console.error('Failed to load YouTube API:', err);
+    throw err;
   });
 }
 
@@ -94,7 +178,6 @@ export function PlayerProvider({ children }) {
   const isPlayingRef = useRef(isPlaying);
   const nextTrackHandlerRef = useRef(() => {});
   const pendingActionRef = useRef(null);
-  const workerRef = useRef(null);
 
   const currentPlaylist = playlists[playlistKey] || playlists[PLAYLIST_KEYS[0]];
   const tracks = currentPlaylist?.tracks || [];
@@ -111,34 +194,48 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     isPlayingRef.current = isPlaying;
     if (isPlaying) {
-      if (workerRef.current) workerRef.current.start();
+      acquireAudioFocus();
     } else {
-      if (workerRef.current) workerRef.current.stop();
+      releaseAudioFocus();
     }
   }, [isPlaying]);
 
+  // Initialize player on component mount and set up user interaction listeners
   useEffect(() => {
-    // Unthrottled background heartbeat worker
-    const worker = createBackgroundHeartbeatWorker(() => {
-      const player = getPlayer();
-      if (!player) return;
-
-      try {
-        if (typeof player.getCurrentTime === 'function') {
-          const rawTime = player.getCurrentTime();
-          const startTime = currentTrack.start ?? 0;
-          const elapsedTime = Math.max(0, rawTime - startTime);
-          setCurrentTime(elapsedTime);
-
-          if (currentTrack.end != null && rawTime >= currentTrack.end) {
-            goNext();
-          }
+    let userInteracted = false;
+    
+    function handleUserInteraction() {
+      if (!userInteracted) {
+        userInteracted = true;
+        console.log('User interacted - initializing YouTube player');
+        if (containerRef.current) {
+          initPlayer(containerRef.current).catch(err => {
+            console.warn('Failed to initialize player on user interaction:', err);
+          });
         }
-      } catch (e) {}
-    });
+      }
+    }
 
-    workerRef.current = worker;
+    // Initialize player immediately (it will load the API)
+    if (containerRef.current) {
+      initPlayer(containerRef.current).catch(err => {
+        console.warn('Failed to initialize player on mount:', err);
+      });
+    }
 
+    // Add user interaction listeners for browser autoplay policies
+    document.addEventListener('click', handleUserInteraction, { once: true });
+    document.addEventListener('touchstart', handleUserInteraction, { once: true });
+    document.addEventListener('keydown', handleUserInteraction, { once: true });
+
+    return () => {
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+    };
+  }, []);
+
+  useEffect(() => {
     globalReadyHandler = (player) => {
       if (pendingActionRef.current) {
         const action = pendingActionRef.current;
@@ -152,11 +249,31 @@ export function PlayerProvider({ children }) {
 
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
+        acquireAudioFocus();
         syncPlaylistTrackIndex(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        setIsPlaying(false);
+        // If mobile OS attempted to pause because tab is minimized / screen is locked, auto-resume
+        if (document.hidden && isPlayingRef.current) {
+          acquireAudioFocus();
+          if (player && typeof player.playVideo === 'function') {
+            setTimeout(() => {
+              try { 
+                player.playVideo(); 
+              } catch (e) {
+                console.warn('Error resuming video:', e);
+              }
+            }, 200);
+          }
+        } else {
+          setIsPlaying(false);
+          // Only release audio focus if user explicitly paused
+          if (!document.hidden) {
+            releaseAudioFocus();
+          }
+        }
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
+        releaseAudioFocus();
         const pl = playlists[activePlaylistKeyRef.current];
         if (pl) {
           nextTrackHandlerRef.current();
@@ -165,7 +282,7 @@ export function PlayerProvider({ children }) {
 
       if (player && typeof player.getDuration === 'function') {
         const dur = player.getDuration();
-        if (dur) {
+        if (dur > 0) {
           setDuration(dur);
         }
       }
@@ -174,27 +291,35 @@ export function PlayerProvider({ children }) {
     if (containerRef.current) {
       initPlayer(containerRef.current);
     }
-
-    return () => {
-      if (workerRef.current) workerRef.current.stop();
-    };
   }, []);
 
   // When returning to website or unlocking screen, auto-resume if expected to play
   useEffect(() => {
     function handleVisibilityChange() {
-      if (!document.hidden) {
+      if (!document.hidden && isPlayingRef.current) {
+        acquireAudioFocus();
         const player = getPlayer();
-        if (player && isPlayingRef.current) {
+        if (player && typeof player.playVideo === 'function') {
           try {
             if (typeof player.getPlayerState === 'function') {
               const state = player.getPlayerState();
-              if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED) {
-                player.playVideo();
+              if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED || state === YT_PLAYER_STATES.UNSTARTED) {
+                setTimeout(() => {
+                  try {
+                    player.playVideo();
+                  } catch (e) {
+                    console.warn('Error auto-resuming playback:', e);
+                  }
+                }, 100);
               }
             }
-          } catch (e) {}
+          } catch (e) {
+            console.warn('Error in visibility change handler:', e);
+          }
         }
+      } else if (document.hidden && isPlayingRef.current) {
+        // Ensure audio focus is maintained when tab is hidden
+        acquireAudioFocus();
       }
     }
 
@@ -224,7 +349,7 @@ export function PlayerProvider({ children }) {
     } catch (e) {}
   }
 
-  // MediaSession API with direct lockscreen action handlers
+  // MediaSession API for Lockscreen and Notification Bar controls
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
@@ -249,8 +374,8 @@ export function PlayerProvider({ children }) {
 
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
 
-        // When user taps Play on the mobile notification / lockscreen:
         navigator.mediaSession.setActionHandler('play', () => {
+          acquireAudioFocus();
           const player = getPlayer();
           if (player && typeof player.playVideo === 'function') {
             player.playVideo();
@@ -260,7 +385,6 @@ export function PlayerProvider({ children }) {
           setIsPlaying(true);
         });
 
-        // When user taps Pause on lockscreen:
         navigator.mediaSession.setActionHandler('pause', () => {
           const player = getPlayer();
           if (player && typeof player.pauseVideo === 'function') {
@@ -269,6 +393,7 @@ export function PlayerProvider({ children }) {
             togglePlay();
           }
           setIsPlaying(false);
+          releaseAudioFocus();
         });
 
         navigator.mediaSession.setActionHandler('previoustrack', () => {
@@ -309,9 +434,39 @@ export function PlayerProvider({ children }) {
     }
   }, [currentTime, duration, currentTrack, isPlaying]);
 
+  // Time update loop
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const interval = setInterval(() => {
+      const player = getPlayer();
+      if (!player || typeof player.getCurrentTime !== 'function') return;
+
+      try {
+        syncPlaylistTrackIndex(player);
+
+        const rawTime = player.getCurrentTime();
+        const startTime = currentTrack.start ?? 0;
+        const elapsedTime = Math.max(0, rawTime - startTime);
+        setCurrentTime(elapsedTime);
+
+        if (currentTrack.end != null && rawTime >= currentTrack.end) {
+          goNext();
+        }
+      } catch (e) {}
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, [isPlaying, playlistKey, trackIndex, currentTrack.start, currentTrack.end]);
+
   function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
     const player = playerInstance || getPlayer();
-    if (!player) return;
+    if (!player) {
+      console.warn('Player instance not available for play action');
+      return;
+    }
+
+    acquireAudioFocus();
 
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
@@ -325,6 +480,9 @@ export function PlayerProvider({ children }) {
           if (currentVideoIdRef.current === targetPlaylist.youtubePlaylistId) {
             if (typeof player.playVideoAt === 'function') {
               player.playVideoAt(tIndex);
+              if (autoplay && typeof player.playVideo === 'function') {
+                setTimeout(() => player.playVideo(), 100);
+              }
               return;
             }
           }
@@ -335,7 +493,9 @@ export function PlayerProvider({ children }) {
             index: tIndex || 0,
             startSeconds: 0,
           });
-          if (!autoplay && typeof player.pauseVideo === 'function') {
+          if (autoplay && typeof player.playVideo === 'function') {
+            setTimeout(() => player.playVideo(), 500);
+          } else if (!autoplay && typeof player.pauseVideo === 'function') {
             setTimeout(() => { try { player.pauseVideo(); } catch (e) {} }, 500);
           }
           setCurrentTime(0);
@@ -348,15 +508,28 @@ export function PlayerProvider({ children }) {
           player.seekTo(startSec, true);
         }
         if (autoplay) {
-          if (typeof player.playVideo === 'function') player.playVideo();
+          if (typeof player.playVideo === 'function') {
+            setTimeout(() => player.playVideo(), 100);
+          }
         } else {
-          if (typeof player.pauseVideo === 'function') player.pauseVideo();
+          if (typeof player.pauseVideo === 'function') {
+            player.pauseVideo();
+          }
         }
       } else {
         currentVideoIdRef.current = videoId;
         if (autoplay) {
           if (typeof player.loadVideoById === 'function') {
             player.loadVideoById({ videoId, startSeconds: startSec });
+            setTimeout(() => {
+              if (typeof player.playVideo === 'function') {
+                try {
+                  player.playVideo();
+                } catch (e) {
+                  console.warn('Error playing video:', e);
+                }
+              }
+            }, 500);
           }
         } else {
           if (typeof player.cueVideoById === 'function') {
@@ -366,11 +539,12 @@ export function PlayerProvider({ children }) {
       }
       setCurrentTime(0);
     } catch (err) {
-      console.warn('Error performing player action:', err);
+      console.error('Error performing player action:', err);
     }
   }
 
   function playTrackAt(pKey, tIndex, { autoplay }) {
+    acquireAudioFocus();
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
       pendingActionRef.current = { pKey, tIndex, autoplay };
@@ -392,12 +566,17 @@ export function PlayerProvider({ children }) {
   }
 
   function selectTrack(pKey, tIndex) {
+    acquireAudioFocus();
     setPlaylistKey(pKey);
     setTrackIndex(tIndex);
-    playTrackAt(pKey, tIndex, { autoplay: true });
+    // Ensure player loads and plays with a small delay to allow state update
+    setTimeout(() => {
+      playTrackAt(pKey, tIndex, { autoplay: true });
+    }, 50);
   }
 
   function goNext() {
+    acquireAudioFocus();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -408,6 +587,7 @@ export function PlayerProvider({ children }) {
   }
 
   function goPrev() {
+    acquireAudioFocus();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -422,18 +602,33 @@ export function PlayerProvider({ children }) {
   });
 
   function togglePlay() {
+    acquireAudioFocus();
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
+      console.log('Player not ready, initializing and playing...');
       playTrackAt(playlistKey, trackIndex, { autoplay: true });
       return;
     }
 
     if (isPlaying) {
-      if (typeof player.pauseVideo === 'function') player.pauseVideo();
+      if (typeof player.pauseVideo === 'function') {
+        try {
+          player.pauseVideo();
+        } catch (e) {
+          console.warn('Error pausing video:', e);
+        }
+      }
     } else {
       const expectedVideoId = currentTrack.videoId || currentPlaylist.youtubeVideoId;
       if (currentVideoIdRef.current === expectedVideoId) {
-        if (typeof player.playVideo === 'function') player.playVideo();
+        if (typeof player.playVideo === 'function') {
+          try {
+            player.playVideo();
+          } catch (e) {
+            console.warn('Error resuming video:', e);
+            playTrackAt(playlistKey, trackIndex, { autoplay: true });
+          }
+        }
       } else {
         playTrackAt(playlistKey, trackIndex, { autoplay: true });
       }
@@ -482,16 +677,17 @@ export function PlayerProvider({ children }) {
       {children}
       <div
         ref={containerRef}
+        id="youtube-player-container"
         style={{
           position: 'fixed',
-          bottom: 0,
-          right: 0,
-          width: '64px',
-          height: '64px',
-          opacity: 0.001,
+          bottom: '-350px',
+          right: '-350px',
+          width: '300px',
+          height: '300px',
+          opacity: 0,
           pointerEvents: 'none',
           zIndex: -50,
-          transform: 'translate3d(0,0,0)',
+          visibility: 'hidden',
         }}
         aria-hidden="true"
       />
