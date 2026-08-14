@@ -88,6 +88,7 @@ export function PlayerProvider({ children }) {
   const containerRef = useRef(null);
   const currentVideoIdRef = useRef(null);
   const activePlaylistKeyRef = useRef(playlistKey);
+  const trackIndexRef = useRef(trackIndex);
   const nextTrackHandlerRef = useRef(() => {});
   const pendingActionRef = useRef(null);
 
@@ -100,6 +101,10 @@ export function PlayerProvider({ children }) {
   }, [playlistKey]);
 
   useEffect(() => {
+    trackIndexRef.current = trackIndex;
+  }, [trackIndex]);
+
+  useEffect(() => {
     globalReadyHandler = (player) => {
       if (pendingActionRef.current) {
         const action = pendingActionRef.current;
@@ -109,19 +114,21 @@ export function PlayerProvider({ children }) {
     };
 
     globalStateChangeHandler = (event) => {
+      const player = getPlayer();
+
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
+        syncPlaylistTrackIndex(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
         setIsPlaying(false);
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
         const pl = playlists[activePlaylistKeyRef.current];
-        if (pl && pl.tracksAreDistinctVideos) {
+        if (pl) {
           nextTrackHandlerRef.current();
         }
       }
 
-      const player = getPlayer();
       if (player && typeof player.getDuration === 'function') {
         const dur = player.getDuration();
         if (dur) {
@@ -135,6 +142,65 @@ export function PlayerProvider({ children }) {
     }
   }, []);
 
+  // Helper to sync YouTube's internal playlist index with React state
+  function syncPlaylistTrackIndex(player) {
+    if (!player) return;
+    try {
+      if (typeof player.getPlaylistIndex === 'function') {
+        const ytIdx = player.getPlaylistIndex();
+        if (ytIdx != null && ytIdx >= 0 && ytIdx !== trackIndexRef.current) {
+          const pl = playlists[activePlaylistKeyRef.current];
+          if (pl && pl.tracks && pl.tracks[ytIdx]) {
+            setTrackIndex(ytIdx);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Background Playback & MediaSession API (Notification & Lockscreen Controls)
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        const title = currentTrack?.title || 'Devi Agomoni';
+        const artist = currentTrack?.subtitle || 'Durga Puja Special';
+        const videoId = currentTrack?.videoId || currentPlaylist?.youtubeVideoId;
+        const coverUrl = videoId
+          ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg'
+          : 'https://www.devipaksha.in/thumbnail.png';
+
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: title,
+          artist: artist,
+          album: 'দেবীপক্ষ — Devi Paksha',
+          artwork: [
+            { src: coverUrl, sizes: '96x96', type: 'image/jpeg' },
+            { src: coverUrl, sizes: '128x128', type: 'image/jpeg' },
+            { src: coverUrl, sizes: '192x192', type: 'image/jpeg' },
+            { src: coverUrl, sizes: '512x512', type: 'image/jpeg' },
+          ],
+        });
+
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+
+        navigator.mediaSession.setActionHandler('play', () => {
+          togglePlay();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          togglePlay();
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          goPrev();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          goNext();
+        });
+      } catch (e) {
+        console.warn('MediaSession notice:', e);
+      }
+    }
+  }, [currentTrack, isPlaying, playlistKey]);
+
   // Time update loop
   useEffect(() => {
     if (!isPlaying) return;
@@ -144,6 +210,8 @@ export function PlayerProvider({ children }) {
       if (!player || typeof player.getCurrentTime !== 'function') return;
 
       try {
+        syncPlaylistTrackIndex(player);
+
         const rawTime = player.getCurrentTime();
         const startTime = currentTrack.start ?? 0;
         const elapsedTime = Math.max(0, rawTime - startTime);
@@ -165,13 +233,35 @@ export function PlayerProvider({ children }) {
     if (!player) return;
 
     const targetPlaylist = playlists[pKey];
-    const targetTrack = targetPlaylist?.tracks[tIndex];
-    if (!targetTrack) return;
+    const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
 
-    const videoId = targetTrack.videoId || targetPlaylist.youtubeVideoId;
-    const startSec = targetTrack.start ?? 0;
+    const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
+    const startSec = targetTrack?.start ?? 0;
 
     try {
+      if (targetPlaylist?.sourceType === 'youtube_playlist' && targetPlaylist?.youtubePlaylistId) {
+        if (typeof player.loadPlaylist === 'function') {
+          if (currentVideoIdRef.current === targetPlaylist.youtubePlaylistId) {
+            if (typeof player.playVideoAt === 'function') {
+              player.playVideoAt(tIndex);
+              return;
+            }
+          }
+          currentVideoIdRef.current = targetPlaylist.youtubePlaylistId;
+          player.loadPlaylist({
+            list: targetPlaylist.youtubePlaylistId,
+            listType: 'playlist',
+            index: tIndex || 0,
+            startSeconds: 0
+          });
+          if (!autoplay && typeof player.pauseVideo === 'function') {
+            setTimeout(() => { try { player.pauseVideo(); } catch(e){} }, 500);
+          }
+          setCurrentTime(0);
+          return;
+        }
+      }
+
       if (currentVideoIdRef.current === videoId) {
         if (typeof player.seekTo === 'function') {
           player.seekTo(startSec, true);
@@ -202,7 +292,6 @@ export function PlayerProvider({ children }) {
   function playTrackAt(pKey, tIndex, { autoplay }) {
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
-      // Player not ready yet, queue action
       pendingActionRef.current = { pKey, tIndex, autoplay };
       if (containerRef.current) {
         initPlayer(containerRef.current);
@@ -228,19 +317,21 @@ export function PlayerProvider({ children }) {
   }
 
   function goNext() {
+    const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
+    if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
-      const plTracks = playlists[playlistKey].tracks;
       const nextIdx = (prevIndex + 1) % plTracks.length;
-      playTrackAt(playlistKey, nextIdx, { autoplay: true });
+      playTrackAt(activePlaylistKeyRef.current, nextIdx, { autoplay: true });
       return nextIdx;
     });
   }
 
   function goPrev() {
+    const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
+    if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
-      const plTracks = playlists[playlistKey].tracks;
       const prevIdx = (prevIndex - 1 + plTracks.length) % plTracks.length;
-      playTrackAt(playlistKey, prevIdx, { autoplay: true });
+      playTrackAt(activePlaylistKeyRef.current, prevIdx, { autoplay: true });
       return prevIdx;
     });
   }
@@ -320,4 +411,3 @@ export function usePlayer() {
   }
   return context;
 }
-

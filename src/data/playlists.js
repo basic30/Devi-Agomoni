@@ -1,5 +1,5 @@
 export const SPOTIFY_PLAYLIST_URL = "https://open.spotify.com/playlist/1zVKSwcN1UDYBXsBWQlp16?si=3H-gmAD4T-er1t7jyKkwjw&utm_source=whatsapp&pi=3ZlzIMv7Tb6i-&sci=spotify%3Acard-config%3A28nSt6OsvOn8zOuvRxjDJr";
-export const YOUTUBE_MUSIC_PLAYLIST_URL = "https://music.youtube.com/playlist?list=PLJAiFJ6bGyew&si=KNYY_Wx9KMaLK2D8";
+export const YOUTUBE_MUSIC_PLAYLIST_URL = "https://music.youtube.com/playlist?list=PLaTL7A_c95z8";
 
 export const PLAYLIST_KEYS = ["durgaPuja", "oldPujoSongs", "ogMahalaya", "mahalaya"];
 
@@ -14,459 +14,131 @@ export const playlists = {oldPujoSongs: {
     key: "oldPujoSongs",
     label: "Old Pujo Songs",
     pillLabel: "RETRO PUJO",
-    description: "50 golden era classic Durga Puja songs by Kishore Kumar, Supriti Ghosh & legends.",
-    sourceType: "youtube",
+    description: "Live Durga Puja playlist auto-synced with YouTube Music.",
+    sourceType: "youtube_playlist",
+    youtubePlaylistId: "PLU7X6UN1WmZ4",
+    sourceUrl: "https://music.youtube.com/playlist?list=PLU7X6UN1WmZ4",
     tracksAreDistinctVideos: true,
     tracks: [
     {
-        "id": "old-001",
-        "title": "Bajlo Tomar Aalor Benu",
-        "subtitle": "Supriti Ghosh",
-        "videoId": "h01sS1jY69c",
-        "duration": 202,
-        "durationLabel": "3:23",
-        "sourceUrl": "https://www.youtube.com/watch?v=h01sS1jY69c"
+        "id": "yt-De5de096how",
+        "title": "Bajlo Tomar Aalor Benu With Narration",
+        "subtitle": "Supriti Ghosh - Topic",
+        "videoId": "De5de096how",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=De5de096how"
     },
     {
-        "id": "old-002",
+        "id": "yt-_RmN29SHVS8",
         "title": "Ogo Amar Agamani-alo",
-        "subtitle": "Sipra Basu",
-        "videoId": "61NfXV1R6cw",
-        "duration": 215,
-        "durationLabel": "3:35",
-        "sourceUrl": "https://www.youtube.com/watch?v=61NfXV1R6cw"
+        "subtitle": "Sipra Basu - Topic",
+        "videoId": "_RmN29SHVS8",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=_RmN29SHVS8"
     },
     {
-        "id": "old-003",
+        "id": "yt-Ku7mJminJxI",
         "title": "Durge Durge Durgatinashini",
-        "subtitle": "Asha Bhosle",
-        "videoId": "45O8KBhSZ0I",
-        "duration": 309,
-        "durationLabel": "5:13",
-        "sourceUrl": "https://www.youtube.com/watch?v=45O8KBhSZ0I"
+        "subtitle": "Asha Bhosle - Topic",
+        "videoId": "Ku7mJminJxI",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=Ku7mJminJxI"
     },
     {
-        "id": "old-004",
-        "title": "Aamar Pujor Phool",
-        "subtitle": "Kishore Kumar",
-        "videoId": "tIZrA08K_3Q",
-        "duration": 234,
-        "durationLabel": "3:54",
-        "sourceUrl": "https://www.youtube.com/watch?v=tIZrA08K_3Q"
+        "id": "yt-_FuhfT1fug4",
+        "title": "Aamar Pujar Phool",
+        "subtitle": "Kishore Kumar - Topic",
+        "videoId": "_FuhfT1fug4",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=_FuhfT1fug4"
     },
     {
-        "id": "old-005",
+        "id": "yt-tQivr34_1rA",
         "title": "Ek Din Pakhi Ure Jabe",
-        "subtitle": "Kishore Kumar",
-        "videoId": "4T-VtXNWEGY",
-        "duration": 218,
-        "durationLabel": "3:38",
-        "sourceUrl": "https://www.youtube.com/watch?v=4T-VtXNWEGY"
+        "subtitle": "Kishore Kumar - Topic",
+        "videoId": "tQivr34_1rA",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=tQivr34_1rA"
     },
     {
-        "id": "old-006",
-        "title": "Akash Keno Dake",
-        "subtitle": "Kishore Kumar",
-        "videoId": "L2Ts1wRFg6s",
-        "duration": 218,
-        "durationLabel": "3:38",
-        "sourceUrl": "https://www.youtube.com/watch?v=L2Ts1wRFg6s"
+        "id": "yt-FIaJIu9uUIA",
+        "title": "Akash Keno Daake",
+        "subtitle": "Kishore Kumar - Topic",
+        "videoId": "FIaJIu9uUIA",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=FIaJIu9uUIA"
     },
     {
-        "id": "old-007",
+        "id": "yt-uAEEKG8mmsU",
         "title": "Sei Raate Raat Chhilo Purnima",
-        "subtitle": "Kishore Kumar",
-        "videoId": "5wOmqB5PAko",
-        "duration": 254,
-        "durationLabel": "4:14",
-        "sourceUrl": "https://www.youtube.com/watch?v=5wOmqB5PAko"
+        "subtitle": "Kishore Kumar - Topic",
+        "videoId": "uAEEKG8mmsU",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=uAEEKG8mmsU"
     },
     {
-        "id": "old-008",
-        "title": "Coffee Houser Sei Addata",
-        "subtitle": "Manna Dey",
-        "videoId": "kvadzdVaTtg",
-        "duration": 407,
-        "durationLabel": "6:47",
-        "sourceUrl": "https://www.youtube.com/watch?v=kvadzdVaTtg"
+        "id": "yt-ujrM3VvXbq8",
+        "title": "Coffee Houser Sei Addata Aaj Aar Nei",
+        "subtitle": "Manna Dey - Topic",
+        "videoId": "ujrM3VvXbq8",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=ujrM3VvXbq8"
     },
     {
-        "id": "old-009",
-        "title": "Aami Dur Hote Tomarei Dekhechhi",
-        "subtitle": "Hemanta Mukherjee",
-        "videoId": "QFeYiQ2X1pc",
-        "duration": 201,
-        "durationLabel": "3:21",
-        "sourceUrl": "https://www.youtube.com/watch?v=QFeYiQ2X1pc"
+        "id": "yt-gWCKHYixzlE",
+        "title": "Aaj Ei Dintake",
+        "subtitle": "Kishore Kumar - Topic",
+        "videoId": "gWCKHYixzlE",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=gWCKHYixzlE"
     },
     {
-        "id": "old-010",
-        "title": "Madhumalati Dake Aay",
-        "subtitle": "Sandhya Mukhopadhyay",
-        "videoId": "FvspAIXgKDw",
-        "duration": 204,
-        "durationLabel": "3:24",
-        "sourceUrl": "https://www.youtube.com/watch?v=FvspAIXgKDw"
+        "id": "yt-2EtPHCHoScU",
+        "title": "Ami Dur Hote Tomarei Dekhechhi",
+        "subtitle": "Hemanta Mukherjee   - Topic",
+        "videoId": "2EtPHCHoScU",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=2EtPHCHoScU"
     },
     {
-        "id": "old-011",
+        "id": "yt-9b0EW7lY8Dc",
+        "title": "Madhumalati Dake Aai",
+        "subtitle": "Sandhya Mukherjee - Topic",
+        "videoId": "9b0EW7lY8Dc",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=9b0EW7lY8Dc"
+    },
+    {
+        "id": "yt-W-YAf-bHkCw",
         "title": "Gouri Elo Dekhe Jalo",
-        "subtitle": "DOHAR FOLK",
+        "subtitle": "Dohar - Topic",
         "videoId": "W-YAf-bHkCw",
-        "duration": 339,
-        "durationLabel": "5:39",
+        "durationLabel": "YouTube Track",
         "sourceUrl": "https://www.youtube.com/watch?v=W-YAf-bHkCw"
     },
     {
-        "id": "old-012",
+        "id": "yt-YC4ERU01ZxY",
         "title": "Jago Tumi Jago",
-        "subtitle": "Trissha Chatterjee",
+        "subtitle": "Trissha Chatterjee - Topic",
         "videoId": "YC4ERU01ZxY",
-        "duration": 149,
-        "durationLabel": "2:29",
+        "durationLabel": "YouTube Track",
         "sourceUrl": "https://www.youtube.com/watch?v=YC4ERU01ZxY"
     },
     {
-        "id": "old-013",
+        "id": "yt-Z7kpAzbC66E",
         "title": "Borondala Saaja",
-        "subtitle": "Madhuraa Bhattacharya",
+        "subtitle": "Madhuraa Bhattacharya - Topic",
         "videoId": "Z7kpAzbC66E",
-        "duration": 161,
-        "durationLabel": "2:41",
+        "durationLabel": "YouTube Track",
         "sourceUrl": "https://www.youtube.com/watch?v=Z7kpAzbC66E"
     },
     {
-        "id": "old-014",
+        "id": "yt-nLtIsV21ABw",
         "title": "Phagun Haoyay Haoyay",
-        "subtitle": "Jayati Chakraborty",
-        "videoId": "43_oBh4YsQs",
-        "duration": 155,
-        "durationLabel": "2:35",
-        "sourceUrl": "https://www.youtube.com/watch?v=43_oBh4YsQs"
-    },
-    {
-        "id": "old-015",
-        "title": "Mahishasura Mardhini Narration",
-        "subtitle": "Birendra Krishna Bhadra",
-        "videoId": "wLVkrgkoPro",
-        "duration": 353,
-        "durationLabel": "5:53",
-        "sourceUrl": "https://www.youtube.com/watch?v=wLVkrgkoPro"
-    },
-    {
-        "id": "old-016",
-        "title": "Ya Chandi",
-        "subtitle": "Mahalaya Chorus",
-        "videoId": "6ZCfPaz28_U",
-        "duration": 97,
-        "durationLabel": "1:37",
-        "sourceUrl": "https://www.youtube.com/watch?v=6ZCfPaz28_U"
-    },
-    {
-        "id": "old-017",
-        "title": "Esho Maa Durga",
-        "subtitle": "Shamik Guha Roy",
-        "videoId": "hDve9YmTZq4",
-        "duration": 237,
-        "durationLabel": "3:57",
-        "sourceUrl": "https://www.youtube.com/watch?v=hDve9YmTZq4"
-    },
-    {
-        "id": "old-018",
-        "title": "O Thakur",
-        "subtitle": "Upal Sengupta",
-        "videoId": "CYcqPK0Dl60",
-        "duration": 174,
-        "durationLabel": "2:54",
-        "sourceUrl": "https://www.youtube.com/watch?v=CYcqPK0Dl60"
-    },
-    {
-        "id": "old-019",
-        "title": "Aigiri Nandini",
-        "subtitle": "Rajalakshmee Sanjay",
-        "videoId": "1Yycc3tejNw",
-        "duration": 902,
-        "durationLabel": "15:02",
-        "sourceUrl": "https://www.youtube.com/watch?v=1Yycc3tejNw"
-    },
-    {
-        "id": "old-020",
-        "title": "Elo Je Maa",
-        "subtitle": "Abhijeet Unplugged",
-        "videoId": "RB_5ED6GIao",
-        "duration": 308,
-        "durationLabel": "5:08",
-        "sourceUrl": "https://www.youtube.com/watch?v=RB_5ED6GIao"
-    },
-    {
-        "id": "old-021",
-        "title": "Baja Sanai Aar Baja Re Dhol",
-        "subtitle": "Abhijeet Unplugged",
-        "videoId": "nLrpLXaWbxk",
-        "duration": 284,
-        "durationLabel": "4:44",
-        "sourceUrl": "https://www.youtube.com/watch?v=nLrpLXaWbxk"
-    },
-    {
-        "id": "old-022",
-        "title": "Joy Joy Durga Ma",
-        "subtitle": "Agnibha Bandyopadhyay",
-        "videoId": "CWtqPoZrUoA",
-        "duration": 351,
-        "durationLabel": "5:51",
-        "sourceUrl": "https://www.youtube.com/watch?v=CWtqPoZrUoA"
-    },
-    {
-        "id": "old-023",
-        "title": "Shundori Komola",
-        "subtitle": "Dohar Folk",
-        "videoId": "zSqRknvFD_s",
-        "duration": 194,
-        "durationLabel": "3:14",
-        "sourceUrl": "https://www.youtube.com/watch?v=zSqRknvFD_s"
-    },
-    {
-        "id": "old-024",
-        "title": "Kalo Jole Kuchla Tole",
-        "subtitle": "IMAN",
-        "videoId": "QvhNGDZhJvE",
-        "duration": 263,
-        "durationLabel": "4:23",
-        "sourceUrl": "https://www.youtube.com/watch?v=QvhNGDZhJvE"
-    },
-    {
-        "id": "old-025",
-        "title": "Raai Jago Go",
-        "subtitle": "Pousali Banerjee",
-        "videoId": "aNPO5geLn_E",
-        "duration": 360,
-        "durationLabel": "6:00",
-        "sourceUrl": "https://www.youtube.com/watch?v=aNPO5geLn_E"
-    },
-    {
-        "id": "old-026",
-        "title": "Egiye De",
-        "subtitle": "Arijit Singh",
-        "videoId": "Ev1NLm7Kd4g",
-        "duration": 254,
-        "durationLabel": "4:14",
-        "sourceUrl": "https://www.youtube.com/watch?v=Ev1NLm7Kd4g"
-    },
-    {
-        "id": "old-027",
-        "title": "Tumi Jantei Paro Naa",
-        "subtitle": "Mahtim Shakib",
-        "videoId": "f9FX9_MN-G4",
-        "duration": 225,
-        "durationLabel": "3:45",
-        "sourceUrl": "https://www.youtube.com/watch?v=f9FX9_MN-G4"
-    },
-    {
-        "id": "old-028",
-        "title": "Rupang Dehi",
-        "subtitle": "Snita Pramanik Ghosh",
-        "videoId": "z-T4qiQMXaw",
-        "duration": 258,
-        "durationLabel": "4:18",
-        "sourceUrl": "https://www.youtube.com/watch?v=z-T4qiQMXaw"
-    },
-    {
-        "id": "old-029",
-        "title": "Debi Sajer Gaan",
-        "subtitle": "Rupak Tiary",
-        "videoId": "BvIcx9ev8X0",
-        "duration": 181,
-        "durationLabel": "3:01",
-        "sourceUrl": "https://www.youtube.com/watch?v=BvIcx9ev8X0"
-    },
-    {
-        "id": "old-030",
-        "title": "Jago Durga Dashapraharanadharinee",
-        "subtitle": "Dwijen Mukhopadhyay",
-        "videoId": "LOlyrK53QM4",
-        "duration": 260,
-        "durationLabel": "4:20",
-        "sourceUrl": "https://www.youtube.com/watch?v=LOlyrK53QM4"
-    },
-    {
-        "id": "old-031",
-        "title": "Subhra Sankha Rabe",
-        "subtitle": "Shyamal Mitra & Arati Mukhopadhyay",
-        "videoId": "f4MaQrZ-q_c",
-        "duration": 170,
-        "durationLabel": "2:50",
-        "sourceUrl": "https://www.youtube.com/watch?v=f4MaQrZ-q_c"
-    },
-    {
-        "id": "old-032",
-        "title": "Runner Chuteche Tai Jhum Jhum",
-        "subtitle": "Hemanta Mukherjee",
-        "videoId": "R9N2_D041k0",
-        "duration": 255,
-        "durationLabel": "4:15",
-        "sourceUrl": "https://www.youtube.com/watch?v=R9N2_D041k0"
-    },
-    {
-        "id": "old-033",
-        "title": "Ami Chini Go Chini Tomare",
-        "subtitle": "Kishore Kumar",
-        "videoId": "kYJjZ3L1Yt0",
-        "duration": 200,
-        "durationLabel": "3:20",
-        "sourceUrl": "https://www.youtube.com/watch?v=kYJjZ3L1Yt0"
-    },
-    {
-        "id": "old-034",
-        "title": "Gaane Bhuban Bhoriye Debo",
-        "subtitle": "Shyamal Mitra",
-        "videoId": "mXqUIFUYqpM",
-        "duration": 213,
-        "durationLabel": "3:33",
-        "sourceUrl": "https://www.youtube.com/watch?v=mXqUIFUYqpM"
-    },
-    {
-        "id": "old-035",
-        "title": "Aami Jamini Tumi Shashi",
-        "subtitle": "Lata Mangeshkar",
-        "videoId": "PqdxxIAgjgk",
-        "duration": 215,
-        "durationLabel": "3:35",
-        "sourceUrl": "https://www.youtube.com/watch?v=PqdxxIAgjgk"
-    },
-    {
-        "id": "old-036",
-        "title": "Lalita Go O Lalita",
-        "subtitle": "Manna Dey",
-        "videoId": "k-qW113pU4w",
-        "duration": 225,
-        "durationLabel": "3:45",
-        "sourceUrl": "https://www.youtube.com/watch?v=k-qW113pU4w"
-    },
-    {
-        "id": "old-037",
-        "title": "Aaj Gungun Gun Gun",
-        "subtitle": "Asha Bhosle",
-        "videoId": "gT580_p2hW4",
-        "duration": 205,
-        "durationLabel": "3:25",
-        "sourceUrl": "https://www.youtube.com/watch?v=gT580_p2hW4"
-    },
-    {
-        "id": "old-038",
-        "title": "Baje Dhak Baje Kash",
-        "subtitle": "Sandhya Mukhopadhyay",
-        "videoId": "I5uMBp5wDhI",
-        "duration": 190,
-        "durationLabel": "3:10",
-        "sourceUrl": "https://www.youtube.com/watch?v=I5uMBp5wDhI"
-    },
-    {
-        "id": "old-039",
-        "title": "Jayanati Mangala Kali",
-        "subtitle": "Pankaj Kumar Mullick",
-        "videoId": "E40N8rKKTCc",
-        "duration": 319,
-        "durationLabel": "5:19",
-        "sourceUrl": "https://www.youtube.com/watch?v=E40N8rKKTCc"
-    },
-    {
-        "id": "old-040",
-        "title": "Santi Dile Bhari",
-        "subtitle": "Utpala Sen",
-        "videoId": "fpuadv59iYw",
-        "duration": 220,
-        "durationLabel": "3:40",
-        "sourceUrl": "https://www.youtube.com/watch?v=fpuadv59iYw"
-    },
-    {
-        "id": "old-041",
-        "title": "Nabo Nabo Rupe Tumi",
-        "subtitle": "Hemanta Mukherjee",
-        "videoId": "upYGF3YAHeo",
-        "duration": 245,
-        "durationLabel": "4:05",
-        "sourceUrl": "https://www.youtube.com/watch?v=upYGF3YAHeo"
-    },
-    {
-        "id": "old-042",
-        "title": "Mono Dilam Na",
-        "subtitle": "Manna Dey",
-        "videoId": "x_Nar1eYzBM",
-        "duration": 200,
-        "durationLabel": "3:20",
-        "sourceUrl": "https://www.youtube.com/watch?v=x_Nar1eYzBM"
-    },
-    {
-        "id": "old-043",
-        "title": "Kaal Kaler Mandira",
-        "subtitle": "Sandhya Mukhopadhyay",
-        "videoId": "G65AupY9ge0",
-        "duration": 200,
-        "durationLabel": "3:20",
-        "sourceUrl": "https://www.youtube.com/watch?v=G65AupY9ge0"
-    },
-    {
-        "id": "old-044",
-        "title": "O Aakash Sona Sona",
-        "subtitle": "Babul Supriyo & Shaan",
-        "videoId": "yJ8-m26d2-k",
-        "duration": 250,
-        "durationLabel": "4:10",
-        "sourceUrl": "https://www.youtube.com/watch?v=yJ8-m26d2-k"
-    },
-    {
-        "id": "old-045",
-        "title": "E Shudhu Gaaner Din",
-        "subtitle": "Sandhya Mukhopadhyay",
-        "videoId": "w6SQsKD2U-Y",
-        "duration": 225,
-        "durationLabel": "3:45",
-        "sourceUrl": "https://www.youtube.com/watch?v=w6SQsKD2U-Y"
-    },
-    {
-        "id": "old-046",
-        "title": "Pujo Aashle Emon Hoy",
-        "subtitle": "Kishore Kumar",
-        "videoId": "SFJeglBF5cg",
-        "duration": 210,
-        "durationLabel": "3:30",
-        "sourceUrl": "https://www.youtube.com/watch?v=SFJeglBF5cg"
-    },
-    {
-        "id": "old-047",
-        "title": "Shubho Agamoni",
-        "subtitle": "Supriti Ghosh",
-        "videoId": "F0l6xM12f1E",
-        "duration": 280,
-        "durationLabel": "4:40",
-        "sourceUrl": "https://www.youtube.com/watch?v=F0l6xM12f1E"
-    },
-    {
-        "id": "old-048",
-        "title": "Eto Boro Pandal",
-        "subtitle": "Kishore Kumar",
-        "videoId": "S8WKJt7bWGg",
-        "duration": 205,
-        "durationLabel": "3:25",
-        "sourceUrl": "https://www.youtube.com/watch?v=S8WKJt7bWGg"
-    },
-    {
-        "id": "old-049",
-        "title": "Chalo Chole Jaai",
-        "subtitle": "Kishore Kumar & R.D. Burman",
-        "videoId": "7uzjfZ423Kc",
-        "duration": 230,
-        "durationLabel": "3:50",
-        "sourceUrl": "https://www.youtube.com/watch?v=7uzjfZ423Kc"
-    },
-    {
-        "id": "old-050",
-        "title": "Ma Go Tui Rakhiye Shoron",
-        "subtitle": "Hemanta Mukherjee",
-        "videoId": "WM0waOKjzkE",
-        "duration": 187,
-        "durationLabel": "3:07",
-        "sourceUrl": "https://www.youtube.com/watch?v=WM0waOKjzkE"
+        "subtitle": "Jayati - Topic",
+        "videoId": "nLtIsV21ABw",
+        "durationLabel": "YouTube Track",
+        "sourceUrl": "https://www.youtube.com/watch?v=nLtIsV21ABw"
     }
 ]
   },

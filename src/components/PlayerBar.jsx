@@ -50,10 +50,10 @@ function PlaylistPillButton({ label, onOpen }) {
         className="
           inline-flex items-center gap-1.5 rounded-full px-4 py-1.5
           bg-white/7 backdrop-blur-2xl backdrop-saturate-150
-          border border-white/15
-          text-xs font-semibold uppercase tracking-[0.15em] text-white/90
-          shadow-[0_4px_20px_rgba(0,0,0,0.35)]
-          transition hover:bg-white/12 active:scale-95
+          border border-[#f1d449]/30
+          text-xs font-semibold uppercase tracking-[0.15em] text-[#f1d449]
+          shadow-[0_4px_20px_rgba(241,212,73,0.15)]
+          transition hover:bg-[#f1d449]/15 active:scale-95
         "
       >
         {label}
@@ -63,33 +63,37 @@ function PlaylistPillButton({ label, onOpen }) {
   );
 }
 
-function TrackCover({ track, playlist, className }) {
+function TrackCover({ track, playlist, isPlaying, className }) {
   const coverUrl = getTrackCoverUrl(track, playlist);
   const videoId = track?.videoId || playlist?.youtubeVideoId;
 
-  if (coverUrl) {
-    return (
-      <div className={`shrink-0 overflow-hidden shadow-lg ring-1 ring-white/20 ${className}`}>
-        <img
-          src={coverUrl}
-          alt={`${track?.title || 'Track'} - artwork`}
-          referrerPolicy="no-referrer"
-          onError={(e) => handleImageFallback(e, videoId)}
-          className="h-full w-full object-cover object-center"
-        />
-      </div>
-    );
-  }
-
-  return <div className={`shrink-0 overflow-hidden bg-white/10 shadow-lg ring-1 ring-white/20 ${className}`} />;
+  return (
+    <div className={`relative shrink-0 overflow-hidden shadow-lg ring-1 ring-[#f1d449]/30 ${className}`}>
+      <img
+        src={coverUrl}
+        alt={`${track?.title || 'Track'} - artwork`}
+        referrerPolicy="no-referrer"
+        onError={(e) => handleImageFallback(e, videoId)}
+        className="h-full w-full object-cover object-center"
+      />
+      {isPlaying && (
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center gap-0.5 px-2">
+          <span className="w-1 bg-[#f1d449] rounded-full animate-[bounce_0.6s_infinite_100ms] h-4" />
+          <span className="w-1 bg-[#f1d449] rounded-full animate-[bounce_0.6s_infinite_300ms] h-6" />
+          <span className="w-1 bg-[#f1d449] rounded-full animate-[bounce_0.6s_infinite_200ms] h-3" />
+        </div>
+      )}
+    </div>
+  );
 }
 
-function ProgressBar({ barRef, progress, currentTime, duration, onClick, onPointerDown }) {
+// Beautiful Gold Curved & Glowing Progress Line Component
+function CurvedProgressBar({ barRef, progress, currentTime, duration, onClick, onPointerDown }) {
   return (
     <div>
       <div
         ref={barRef}
-        className="group/bar relative h-2 w-full cursor-pointer"
+        className="group/bar relative h-3 w-full cursor-pointer flex items-center"
         role="slider"
         aria-label="Seek"
         aria-valuemin={0}
@@ -98,16 +102,25 @@ function ProgressBar({ barRef, progress, currentTime, duration, onClick, onPoint
         onClick={onClick}
         onPointerDown={onPointerDown}
       >
-        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-sm bg-white/20">
-          <div className="h-full rounded-sm bg-white/90" style={{ width: `${progress}%` }} />
+        {/* Background Track with Subtle Curve Glow */}
+        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/15 backdrop-blur-sm">
+          {/* Filled Progress Bar with Gold Theme Gradient */}
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-amber-500 via-[#f1d449] to-yellow-300 shadow-[0_0_12px_rgba(241,212,73,0.8)] transition-all duration-100"
+            style={{ width: `${progress}%` }}
+          />
         </div>
+
+        {/* Curved Gold Glowing Handle Thumb */}
         <div
-          className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm bg-white opacity-0 shadow transition-opacity group-hover/bar:opacity-100"
+          className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#f1d449] shadow-[0_0_10px_rgba(241,212,73,1)] transition-transform duration-75 group-hover/bar:scale-125"
           style={{ left: `${progress}%` }}
         />
       </div>
-      <div className="mt-1 text-left text-[10px] tabular-nums text-white/60">
-        {formatTimeLabel(currentTime)} / {formatTimeLabel(duration)}
+
+      <div className="mt-0.5 flex justify-between text-[10px] tabular-nums text-white/70 font-medium">
+        <span>{formatTimeLabel(currentTime)}</span>
+        <span>{formatTimeLabel(duration)}</span>
       </div>
     </div>
   );
@@ -120,7 +133,7 @@ const SVG_PLAY_PATH = "M8 5v14l11-7z";
 
 function PlayerControls({ isPlaying, canSkip, playDisabled, onPrev, onPlayPause, onNext }) {
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="flex items-center gap-1">
       <button
         type="button"
         aria-label="Previous track"
@@ -139,9 +152,9 @@ function PlayerControls({ isPlaying, canSkip, playDisabled, onPrev, onPlayPause,
         aria-pressed={isPlaying}
         onClick={onPlayPause}
         disabled={playDisabled}
-        className="grid h-9 w-9 place-items-center rounded-xl bg-white text-black shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-50"
+        className="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-tr from-amber-400 via-[#f1d449] to-yellow-300 text-black shadow-[0_4px_20px_rgba(241,212,73,0.4)] transition hover:scale-105 active:scale-95 disabled:opacity-50"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d={isPlaying ? SVG_PAUSE_PATH : SVG_PLAY_PATH} />
         </svg>
       </button>
@@ -203,20 +216,20 @@ export function PlayerBar({ onOpenPlaylist }) {
 
         <div
           className="
-            group relative flex items-stretch gap-3 rounded-3xl p-3
-            bg-white/7 backdrop-blur-2xl backdrop-saturate-150
+            group relative flex items-center gap-3.5 rounded-3xl p-3.5
+            bg-white/8 backdrop-blur-2xl backdrop-saturate-150
             border border-white/15
-            shadow-[0_8px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.25)]
+            shadow-[0_8px_40px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.25)]
           "
         >
-          <TrackCover track={track} playlist={playlist} className="w-16 rounded-xl" />
+          <TrackCover track={track} playlist={playlist} isPlaying={isPlaying} className="w-16 h-16 rounded-2xl" />
 
           <div className="flex min-w-0 flex-1 flex-col justify-center">
-            <p className="truncate text-[13px] font-semibold text-white drop-shadow-sm">{track?.title || ''}</p>
-            <p className="truncate text-[11px] text-white/70">{track?.subtitle || ''}</p>
+            <p className="truncate text-[14px] font-semibold text-white drop-shadow-sm">{track?.title || ''}</p>
+            <p className="truncate text-[11px] text-[#f1d449]/90 font-medium">{track?.subtitle || ''}</p>
 
-            <div className="mt-1.5">
-              <ProgressBar
+            <div className="mt-2">
+              <CurvedProgressBar
                 barRef={barRef}
                 progress={progress}
                 currentTime={currentTime}
