@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { playlists, PLAYLIST_KEYS } from '../data/playlists';
+import { createBackgroundHeartbeatWorker } from '../utils/backgroundWorker';
 
 const PlayerContext = createContext(null);
 
 const YT_PLAYER_STATES = {
+  UNSTARTED: -1,
   ENDED: 0,
   PLAYING: 1,
   PAUSED: 2,
@@ -128,6 +130,7 @@ export function PlayerProvider({ children }) {
   const isPlayingRef = useRef(isPlaying);
   const nextTrackHandlerRef = useRef(() => {});
   const pendingActionRef = useRef(null);
+  const workerRef = useRef(null);
 
   const currentPlaylist = playlists[playlistKey] || playlists[PLAYLIST_KEYS[0]];
   const tracks = currentPlaylist?.tracks || [];
@@ -141,16 +144,59 @@ export function PlayerProvider({ children }) {
     trackIndexRef.current = trackIndex;
   }, [trackIndex]);
 
+  // Manage Web Worker heartbeat for unthrottled background playback
   useEffect(() => {
     isPlayingRef.current = isPlaying;
     if (isPlaying) {
       acquireMobileAudioLock();
+      if (workerRef.current) {
+        workerRef.current.start();
+      }
     } else {
       releaseMobileAudioLock();
+      if (workerRef.current) {
+        workerRef.current.stop();
+      }
     }
   }, [isPlaying]);
 
   useEffect(() => {
+    // Initialize unthrottled worker
+    const worker = createBackgroundHeartbeatWorker(() => {
+      const player = getPlayer();
+      if (!player) return;
+
+      // When tab is hidden / mobile screen is locked:
+      if (document.hidden && isPlayingRef.current) {
+        acquireMobileAudioLock();
+        try {
+          if (typeof player.getPlayerState === 'function') {
+            const state = player.getPlayerState();
+            // If mobile OS suspended the player into paused state (2)
+            if (state === YT_PLAYER_STATES.PAUSED) {
+              player.playVideo();
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Keep position updated
+      try {
+        if (typeof player.getCurrentTime === 'function') {
+          const rawTime = player.getCurrentTime();
+          const startTime = currentTrack.start ?? 0;
+          const elapsedTime = Math.max(0, rawTime - startTime);
+          setCurrentTime(elapsedTime);
+
+          if (currentTrack.end != null && rawTime >= currentTrack.end) {
+            goNext();
+          }
+        }
+      } catch (e) {}
+    });
+
+    workerRef.current = worker;
+
     globalReadyHandler = (player) => {
       if (pendingActionRef.current) {
         const action = pendingActionRef.current;
@@ -167,7 +213,7 @@ export function PlayerProvider({ children }) {
         acquireMobileAudioLock();
         syncPlaylistTrackIndex(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        // If mobile OS attempted to pause because tab is minimized / screen is locked
+        // If mobile OS attempted to pause because tab is minimized / screen is locked, auto-resume
         if (document.hidden && isPlayingRef.current) {
           acquireMobileAudioLock();
           if (player && typeof player.playVideo === 'function') {
@@ -197,6 +243,12 @@ export function PlayerProvider({ children }) {
     if (containerRef.current) {
       initPlayer(containerRef.current);
     }
+
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.stop();
+      }
+    };
   }, []);
 
   // Listen for screen off & tab visibility changes to keep background audio alive
@@ -296,31 +348,6 @@ export function PlayerProvider({ children }) {
       }
     }
   }, [currentTime, duration, currentTrack]);
-
-  // Time update loop
-  useEffect(() => {
-    if (!isPlaying) return;
-
-    const interval = setInterval(() => {
-      const player = getPlayer();
-      if (!player || typeof player.getCurrentTime !== 'function') return;
-
-      try {
-        syncPlaylistTrackIndex(player);
-
-        const rawTime = player.getCurrentTime();
-        const startTime = currentTrack.start ?? 0;
-        const elapsedTime = Math.max(0, rawTime - startTime);
-        setCurrentTime(elapsedTime);
-
-        if (currentTrack.end != null && rawTime >= currentTrack.end) {
-          goNext();
-        }
-      } catch (e) {}
-    }, 400);
-
-    return () => clearInterval(interval);
-  }, [isPlaying, playlistKey, trackIndex, currentTrack.start, currentTrack.end]);
 
   function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
     const player = playerInstance || getPlayer();
