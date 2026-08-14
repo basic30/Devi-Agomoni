@@ -19,42 +19,6 @@ let isPlayerReady = false;
 let globalStateChangeHandler = null;
 let globalReadyHandler = null;
 
-// Continuous Web Audio + HTML5 Silent Loop to hold Mobile OS Background Audio Session
-let mobileAudioContext = null;
-let mobileSilentAudio = null;
-
-// 1-second silent WAV base64
-const SILENT_WAV_BASE64 = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
-
-function acquireMobileAudioLock() {
-  if (typeof window === 'undefined') return;
-
-  try {
-    if (!mobileSilentAudio) {
-      mobileSilentAudio = new Audio(SILENT_WAV_BASE64);
-      mobileSilentAudio.loop = true;
-      mobileSilentAudio.volume = 0.01;
-    }
-    mobileSilentAudio.play().catch(() => {});
-  } catch (e) {}
-
-  try {
-    if (!mobileAudioContext && (window.AudioContext || window.webkitAudioContext)) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      mobileAudioContext = new AudioCtx();
-    }
-    if (mobileAudioContext && mobileAudioContext.state === 'suspended') {
-      mobileAudioContext.resume().catch(() => {});
-    }
-  } catch (e) {}
-}
-
-function releaseMobileAudioLock() {
-  if (mobileSilentAudio) {
-    try { mobileSilentAudio.pause(); } catch (e) {}
-  }
-}
-
 function loadYouTubeIframeApi() {
   if (window.YT && window.YT.Player) {
     return Promise.resolve(window.YT);
@@ -144,43 +108,21 @@ export function PlayerProvider({ children }) {
     trackIndexRef.current = trackIndex;
   }, [trackIndex]);
 
-  // Manage Web Worker heartbeat for unthrottled background playback
   useEffect(() => {
     isPlayingRef.current = isPlaying;
     if (isPlaying) {
-      acquireMobileAudioLock();
-      if (workerRef.current) {
-        workerRef.current.start();
-      }
+      if (workerRef.current) workerRef.current.start();
     } else {
-      releaseMobileAudioLock();
-      if (workerRef.current) {
-        workerRef.current.stop();
-      }
+      if (workerRef.current) workerRef.current.stop();
     }
   }, [isPlaying]);
 
   useEffect(() => {
-    // Initialize unthrottled worker
+    // Unthrottled background heartbeat worker
     const worker = createBackgroundHeartbeatWorker(() => {
       const player = getPlayer();
       if (!player) return;
 
-      // When tab is hidden / mobile screen is locked:
-      if (document.hidden && isPlayingRef.current) {
-        acquireMobileAudioLock();
-        try {
-          if (typeof player.getPlayerState === 'function') {
-            const state = player.getPlayerState();
-            // If mobile OS suspended the player into paused state (2)
-            if (state === YT_PLAYER_STATES.PAUSED) {
-              player.playVideo();
-            }
-          }
-        } catch (e) {}
-      }
-
-      // Keep position updated
       try {
         if (typeof player.getCurrentTime === 'function') {
           const rawTime = player.getCurrentTime();
@@ -210,20 +152,9 @@ export function PlayerProvider({ children }) {
 
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
-        acquireMobileAudioLock();
         syncPlaylistTrackIndex(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        // If mobile OS attempted to pause because tab is minimized / screen is locked, auto-resume
-        if (document.hidden && isPlayingRef.current) {
-          acquireMobileAudioLock();
-          if (player && typeof player.playVideo === 'function') {
-            setTimeout(() => {
-              try { player.playVideo(); } catch (e) {}
-            }, 100);
-          }
-        } else {
-          setIsPlaying(false);
-        }
+        setIsPlaying(false);
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
         const pl = playlists[activePlaylistKeyRef.current];
@@ -245,31 +176,35 @@ export function PlayerProvider({ children }) {
     }
 
     return () => {
-      if (workerRef.current) {
-        workerRef.current.stop();
-      }
+      if (workerRef.current) workerRef.current.stop();
     };
   }, []);
 
-  // Listen for screen off & tab visibility changes to keep background audio alive
+  // When returning to website or unlocking screen, auto-resume if expected to play
   useEffect(() => {
     function handleVisibilityChange() {
-      if (document.hidden && isPlayingRef.current) {
-        acquireMobileAudioLock();
+      if (!document.hidden) {
         const player = getPlayer();
-        if (player && typeof player.playVideo === 'function') {
+        if (player && isPlayingRef.current) {
           try {
-            player.playVideo();
+            if (typeof player.getPlayerState === 'function') {
+              const state = player.getPlayerState();
+              if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED) {
+                player.playVideo();
+              }
+            }
           } catch (e) {}
         }
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pagehide', handleVisibilityChange);
+    window.addEventListener('pageshow', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pagehide', handleVisibilityChange);
+      window.removeEventListener('pageshow', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
     };
   }, []);
 
@@ -289,7 +224,7 @@ export function PlayerProvider({ children }) {
     } catch (e) {}
   }
 
-  // MediaSession API for Lockscreen and Notification Bar controls
+  // MediaSession API with direct lockscreen action handlers
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
@@ -314,46 +249,69 @@ export function PlayerProvider({ children }) {
 
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
 
+        // When user taps Play on the mobile notification / lockscreen:
         navigator.mediaSession.setActionHandler('play', () => {
-          acquireMobileAudioLock();
-          togglePlay();
+          const player = getPlayer();
+          if (player && typeof player.playVideo === 'function') {
+            player.playVideo();
+          } else {
+            togglePlay();
+          }
+          setIsPlaying(true);
         });
+
+        // When user taps Pause on lockscreen:
         navigator.mediaSession.setActionHandler('pause', () => {
-          togglePlay();
+          const player = getPlayer();
+          if (player && typeof player.pauseVideo === 'function') {
+            player.pauseVideo();
+          } else {
+            togglePlay();
+          }
+          setIsPlaying(false);
         });
+
         navigator.mediaSession.setActionHandler('previoustrack', () => {
           goPrev();
         });
+
         navigator.mediaSession.setActionHandler('nexttrack', () => {
           goNext();
+        });
+
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          if (details.seekTime != null) {
+            const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
+            if (calcDur > 0) {
+              seekTo(details.seekTime / calcDur);
+            }
+          }
         });
       } catch (e) {
         console.warn('MediaSession notice:', e);
       }
     }
-  }, [currentTrack, isPlaying, playlistKey]);
+  }, [currentTrack, isPlaying, playlistKey, duration]);
 
   // Sync lockscreen position state
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
       const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
-      if (calcDur > 0) {
+      if (calcDur > 0 && currentTime >= 0) {
         try {
           navigator.mediaSession.setPositionState({
             duration: calcDur,
-            playbackRate: 1,
+            playbackRate: isPlaying ? 1 : 0,
             position: Math.min(currentTime, calcDur),
           });
         } catch (e) {}
       }
     }
-  }, [currentTime, duration, currentTrack]);
+  }, [currentTime, duration, currentTrack, isPlaying]);
 
   function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
     const player = playerInstance || getPlayer();
     if (!player) return;
-
-    acquireMobileAudioLock();
 
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
@@ -413,7 +371,6 @@ export function PlayerProvider({ children }) {
   }
 
   function playTrackAt(pKey, tIndex, { autoplay }) {
-    acquireMobileAudioLock();
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
       pendingActionRef.current = { pKey, tIndex, autoplay };
@@ -435,14 +392,12 @@ export function PlayerProvider({ children }) {
   }
 
   function selectTrack(pKey, tIndex) {
-    acquireMobileAudioLock();
     setPlaylistKey(pKey);
     setTrackIndex(tIndex);
     playTrackAt(pKey, tIndex, { autoplay: true });
   }
 
   function goNext() {
-    acquireMobileAudioLock();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -453,7 +408,6 @@ export function PlayerProvider({ children }) {
   }
 
   function goPrev() {
-    acquireMobileAudioLock();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -468,7 +422,6 @@ export function PlayerProvider({ children }) {
   });
 
   function togglePlay() {
-    acquireMobileAudioLock();
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
       playTrackAt(playlistKey, trackIndex, { autoplay: true });
@@ -527,10 +480,6 @@ export function PlayerProvider({ children }) {
   return (
     <PlayerContext.Provider value={value}>
       {children}
-      {/* 
-        Must have normal non-zero dimensions (64x64) and fixed in viewport so mobile browsers
-        (Android Chrome & iOS Safari) do not freeze the YouTube player process when screen locks or minimizes!
-      */}
       <div
         ref={containerRef}
         style={{
