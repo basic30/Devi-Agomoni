@@ -1,4 +1,4 @@
-export const SPOTIFY_PLAYLIST_URL = "https://open.spotify.com/playlist/1zVKSwcN1UDYBXsBWQlp16?si=3H-gmAD4T-er1t7jyKkwjw&utm_source=whatsapp&pi=3ZlzIMv7Tb6i-&sci=spotify%3Acard-config%3A28nSt6OsvOn8zOuvRxjDJr";
+export const SPOTIFY_PLAYLIST_URL = "https://open.spotify.com/playlist/0RtQ3INU8Pb6kKbymA2uFC";
 export const YOUTUBE_MUSIC_PLAYLIST_URL = "https://music.youtube.com/playlist?list=PLaTL7A_c95z8";
 
 export const PLAYLIST_KEYS = ["durgaPuja", "oldPujoSongs", "ogMahalaya", "mahalaya"];

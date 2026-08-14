@@ -3,6 +3,7 @@ import { usePlayer } from '../context/PlayerContext';
 import { playlists, PLAYLIST_TABS } from '../data/playlists';
 import { formatTimeLabel, getTrackCoverUrl, handleImageFallback } from './PlayerBar';
 import { CloseIcon } from './Icons';
+import { fetchLiveYouTubePlaylist } from '../utils/playlistFetcher';
 
 function TrackRow({ index, track, playlist, isActive, isPlaying, onSelect }) {
   const durationSec = track.end == null ? track.duration : track.end - (track.start ?? 0);
@@ -56,12 +57,31 @@ function TrackRow({ index, track, playlist, isActive, isPlaying, onSelect }) {
 export function PlaylistModal({ open, onClose }) {
   const { playlistKey, trackIndex, isPlaying, selectTrack } = usePlayer();
   const [selectedTab, setSelectedTab] = useState(playlistKey);
+  const [dynamicTracks, setDynamicTracks] = useState({});
 
   useEffect(() => {
     if (open) {
       setSelectedTab(playlistKey);
     }
   }, [open, playlistKey]);
+
+  // Dynamically fetch any new songs from YouTube Music playlist whenever modal opens
+  useEffect(() => {
+    if (!open) return;
+    const pl = playlists[selectedTab];
+    if (pl && pl.sourceType === 'youtube_playlist' && pl.youtubePlaylistId) {
+      fetchLiveYouTubePlaylist(pl.youtubePlaylistId).then((liveTracks) => {
+        if (liveTracks && liveTracks.length > 0) {
+          setDynamicTracks((prev) => ({
+            ...prev,
+            [selectedTab]: liveTracks,
+          }));
+          // Update in-memory playlist tracks for player context
+          pl.tracks = liveTracks;
+        }
+      });
+    }
+  }, [open, selectedTab]);
 
   useEffect(() => {
     if (!open) return;
@@ -75,6 +95,7 @@ export function PlaylistModal({ open, onClose }) {
   if (!open) return null;
 
   const currentPl = playlists[selectedTab] || playlists[PLAYLIST_TABS[0]?.key] || playlists.durgaPuja;
+  const displayTracks = dynamicTracks[selectedTab] || currentPl.tracks || [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true">
@@ -131,9 +152,9 @@ export function PlaylistModal({ open, onClose }) {
 
         {/* Scrollable Tracklist */}
         <div className="mt-3 flex-1 space-y-1 overflow-y-auto px-3 pb-4 playlist-scroll">
-          {currentPl.tracks.map((t, idx) => (
+          {displayTracks.map((t, idx) => (
             <TrackRow
-              key={t.id}
+              key={t.id || `track-${idx}`}
               index={idx}
               track={t}
               playlist={currentPl}

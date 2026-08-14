@@ -6,7 +6,7 @@ import { CloseIcon, SendIcon, ChatIcon } from './Icons';
 const QUICK_EMOJIS = ['🌺', '🥁', '🪔', '🙏', '✨', '❤️', '💛'];
 
 export function GlobalChatModal({ open, onClose }) {
-  const { messages, nickname, avatarGradient, isLiveConnected, sendMessage, updateNickname } = useGlobalChat();
+  const { messages, deviceId, nickname, avatarGradient, isLiveConnected, sendMessage, updateNickname } = useGlobalChat();
   const { count } = usePresence();
   const [inputText, setInputText] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
@@ -137,7 +137,7 @@ export function GlobalChatModal({ open, onClose }) {
         {/* Messages List */}
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4 playlist-scroll">
           {messages.map((msg) => {
-            const isMe = msg.sender === nickname;
+            const isMe = (msg.senderId && msg.senderId === deviceId) || msg.sender === nickname;
             return (
               <div
                 key={msg.id}

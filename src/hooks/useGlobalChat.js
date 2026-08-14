@@ -1,67 +1,40 @@
 import { useState, useEffect, useRef } from 'react';
+import {
+  realtimeBus,
+  getPersistentDeviceId,
+  getPersistentNickname,
+  setPersistentNickname,
+  getPersistentAvatarColor,
+} from '../utils/realtime';
 
-const CHAT_STORAGE_KEY = 'devi_paksha_global_chat_messages_v5';
-const USER_NICKNAME_SESSION_KEY = 'devi_paksha_chat_nickname_session';
+const CHAT_STORAGE_KEY = 'devi_paksha_global_chat_messages_v6';
 
 const INITIAL_MESSAGES = [
   {
     id: 'msg-init-1',
+    senderId: 'system-1',
     sender: 'Pujo Lover #104',
     avatarColor: 'from-amber-400 to-red-500',
-    text: 'শুভ আগমনী সবাইকে! 🌺',
+    text: 'শুভ শারদীয়া সবাইকে! 🌺',
     timestamp: '8:10 pm',
-    isSystem: false,
   },
   {
     id: 'msg-init-2',
+    senderId: 'system-2',
     sender: 'Dhak Beats #712',
     avatarColor: 'from-orange-400 to-amber-600',
     text: 'পুজো আসছে! কে কোথায় ঠাকুর দেখতে যাবেন? 🥁✨',
     timestamp: '8:12 pm',
-    isSystem: false,
   },
   {
     id: 'msg-init-3',
+    senderId: 'system-3',
     sender: 'Agamoni Fan #305',
     avatarColor: 'from-yellow-400 to-amber-500',
     text: 'মহালয়া শোনা হয়ে গেছে সকাল থেকে! আবহটাই অন্যরকম! ❤️',
     timestamp: '8:15 pm',
-    isSystem: false,
   },
 ];
-
-const AVATAR_GRADIENTS = [
-  'from-amber-400 to-red-500',
-  'from-orange-400 to-amber-600',
-  'from-yellow-400 to-amber-500',
-  'from-rose-400 to-orange-500',
-  'from-yellow-500 to-red-600',
-  'from-amber-300 to-orange-600',
-];
-
-function getRandomGradient() {
-  return AVATAR_GRADIENTS[Math.floor(Math.random() * AVATAR_GRADIENTS.length)];
-}
-
-function generateAnonymousName() {
-  const titles = ['Pujo Lover', 'Agamoni Fan', 'Dhak Beats', 'Kolkata Vibe', 'Shiuli Hawa', 'Pandal Hopper', 'Mahalaya Tune'];
-  const title = titles[Math.floor(Math.random() * titles.length)];
-  const num = Math.floor(100 + Math.random() * 900);
-  return `${title} #${num}`;
-}
-
-export function getTabNickname() {
-  try {
-    let name = sessionStorage.getItem(USER_NICKNAME_SESSION_KEY);
-    if (!name) {
-      name = generateAnonymousName();
-      sessionStorage.setItem(USER_NICKNAME_SESSION_KEY, name);
-    }
-    return name;
-  } catch (e) {
-    return generateAnonymousName();
-  }
-}
 
 function formatMsgTime() {
   const now = new Date();
@@ -93,14 +66,16 @@ function saveStoredMessages(msgs) {
 
 export function useGlobalChat() {
   const [messages, setMessages] = useState(() => getStoredMessages());
-  const [nickname, setNickname] = useState(() => getTabNickname());
-  const [avatarGradient] = useState(() => getRandomGradient());
-  const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [deviceId] = useState(() => getPersistentDeviceId());
+  const [nickname, setNickname] = useState(() => getPersistentNickname());
+  const [avatarGradient] = useState(() => getPersistentAvatarColor());
+  const [isLiveConnected, setIsLiveConnected] = useState(true);
 
   const broadcastChannelRef = useRef(null);
 
-  // Helper to merge message cleanly without duplicates
+  // Merge incoming message without duplicates
   function mergeAndSaveMessage(newMsg) {
+    if (!newMsg || !newMsg.id) return;
     setMessages((prev) => {
       if (prev.some((m) => m.id === newMsg.id)) return prev;
       const updated = [...prev, newMsg];
@@ -110,20 +85,18 @@ export function useGlobalChat() {
   }
 
   useEffect(() => {
-    // 1. Vite Native WebSocket Bus (0 port errors, 0 connection warnings)
-    if (import.meta.hot) {
-      setIsLiveConnected(true);
-      const handleViteMsg = (data) => {
-        if (data && data.id && data.text && data.sender) {
-          mergeAndSaveMessage(data);
-        }
-      };
-      import.meta.hot.on('devi:chat-msg', handleViteMsg);
-    }
+    // 1. Subscribe to Global MQTT Realtime Bus (Cross-Device across all phones/laptops)
+    const unsubscribeBus = realtimeBus.subscribe((event) => {
+      if (event.type === 'STATUS') {
+        setIsLiveConnected(event.connected);
+      } else if (event.topic === 'devipaksha/chat/v4' && event.data) {
+        mergeAndSaveMessage(event.data);
+      }
+    });
 
-    // 2. BroadcastChannel fallback for multi-tab support
+    // 2. BroadcastChannel for instant local tabs on same device
     if (typeof BroadcastChannel !== 'undefined') {
-      const bc = new BroadcastChannel('devipaksha_global_chat_channel_v5');
+      const bc = new BroadcastChannel('devipaksha_global_chat_channel_v6');
       broadcastChannelRef.current = bc;
       bc.onmessage = (event) => {
         if (event.data && event.data.type === 'NEW_MESSAGE') {
@@ -132,7 +105,7 @@ export function useGlobalChat() {
       };
     }
 
-    // 3. Storage event listener
+    // 3. Sync localStorage across tabs
     function handleStorageChange(e) {
       if (e.key === CHAT_STORAGE_KEY && e.newValue) {
         try {
@@ -146,6 +119,7 @@ export function useGlobalChat() {
     window.addEventListener('storage', handleStorageChange);
 
     return () => {
+      unsubscribeBus();
       if (broadcastChannelRef.current) broadcastChannelRef.current.close();
       window.removeEventListener('storage', handleStorageChange);
     };
@@ -156,24 +130,20 @@ export function useGlobalChat() {
 
     const newMsg = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      sender: nickname,
+      senderId: deviceId, // Permanent Device ID
+      sender: nickname,   // Permanent Handle
       avatarColor: avatarGradient,
       text: text.trim(),
       timestamp: formatMsgTime(),
-      isSystem: false,
     };
 
     // Save locally
     mergeAndSaveMessage(newMsg);
 
-    // Send over Vite's native WebSocket connection (0 console errors)
-    if (import.meta.hot) {
-      try {
-        import.meta.hot.send('devi:chat-msg', newMsg);
-      } catch (e) {}
-    }
+    // Publish to Global MQTT Realtime Bus
+    realtimeBus.publish('devipaksha/chat/v4', newMsg);
 
-    // Broadcast locally to tabs on same device
+    // Broadcast to other tabs on same device
     if (broadcastChannelRef.current) {
       try {
         broadcastChannelRef.current.postMessage({ type: 'NEW_MESSAGE', message: newMsg });
@@ -185,13 +155,12 @@ export function useGlobalChat() {
     if (!newName || !newName.trim()) return;
     const clean = newName.trim();
     setNickname(clean);
-    try {
-      sessionStorage.setItem(USER_NICKNAME_SESSION_KEY, clean);
-    } catch (e) {}
+    setPersistentNickname(clean);
   }
 
   return {
     messages,
+    deviceId,
     nickname,
     avatarGradient,
     isLiveConnected,
