@@ -53,18 +53,6 @@ const FADE_DURATION_MS = 1500;
 const SIZES_ATTR = '100vw';
 const IMG_CLASS = 'absolute inset-0 h-full w-full object-cover object-center';
 
-function GrainOverlay() {
-  return (
-    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full opacity-60 mix-blend-overlay">
-      <filter id="hero-grain">
-        <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch" />
-        <feColorMatrix type="saturate" values="0" />
-      </filter>
-      <rect width="100%" height="100%" filter="url(#hero-grain)" />
-    </svg>
-  );
-}
-
 function PictureBackground({ periodKey, className }) {
   const config = BG_CONFIG[periodKey] || BG_CONFIG.midnight;
   return (
@@ -125,11 +113,8 @@ export function HeroBackground() {
       ))}
 
       {/* Ambient gradient overlays */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/50 sm:from-black/10 sm:to-black/40" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/40" />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/25 to-black/10" />
-
-      {/* SVG noise grain filter */}
-      <GrainOverlay />
     </div>
   );
 }
