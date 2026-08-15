@@ -35,7 +35,7 @@ export async function fetchLiveYouTubePlaylist(playlistId, existingTracks = []) 
           sourceUrl: `https://www.youtube.com/watch?v=${v.videoId}`,
         }));
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // 2. Fallback: YouTube RSS feed
@@ -90,7 +90,7 @@ export async function fetchLiveYouTubePlaylist(playlistId, existingTracks = []) 
         }
         return entries;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   return null;

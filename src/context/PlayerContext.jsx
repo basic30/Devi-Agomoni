@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { playlists, PLAYLIST_KEYS } from '../data/playlists';
-import { createBackgroundHeartbeatWorker } from '../utils/backgroundWorker';
 import { fetchLiveYouTubePlaylist } from '../utils/playlistFetcher';
 
 const PlayerContext = createContext(null);
@@ -19,30 +18,6 @@ let ytPlayerInstance = null;
 let isPlayerReady = false;
 let globalStateChangeHandler = null;
 let globalReadyHandler = null;
-
-// Silent WAV audio loop base64 (Grants Mobile OS Audio Focus & keeps Notification Bar visible)
-const SILENT_AUDIO_WAV = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
-let audioFocusElement = null;
-
-function acquireAudioFocus() {
-  if (typeof window === 'undefined') return;
-  try {
-    if (!audioFocusElement) {
-      audioFocusElement = new Audio(SILENT_AUDIO_WAV);
-      audioFocusElement.loop = true;
-      audioFocusElement.volume = 0.05;
-    }
-    audioFocusElement.play().catch(() => {});
-  } catch (e) {}
-}
-
-function releaseAudioFocus() {
-  if (audioFocusElement) {
-    try {
-      audioFocusElement.pause();
-    } catch (e) {}
-  }
-}
 
 function loadYouTubeIframeApi() {
   if (window.YT && window.YT.Player) {
@@ -63,13 +38,8 @@ function loadYouTubeIframeApi() {
   return ytApiPromise;
 }
 
-// Eagerly pre-initialize audioFocusElement & preload YouTube API on module load
+// Preload YouTube API on module load
 if (typeof window !== 'undefined') {
-  try {
-    audioFocusElement = new Audio(SILENT_AUDIO_WAV);
-    audioFocusElement.loop = true;
-    audioFocusElement.volume = 0.05;
-  } catch (e) {}
   loadYouTubeIframeApi();
 }
 
@@ -103,7 +73,7 @@ function initPlayer(element) {
                 iframe.setAttribute('playsinline', '1');
                 iframe.setAttribute('webkit-playsinline', '1');
               }
-            } catch (e) {}
+            } catch (e) { }
 
             if (globalReadyHandler) {
               globalReadyHandler(event.target);
@@ -138,38 +108,12 @@ export function PlayerProvider({ children }) {
   const activePlaylistKeyRef = useRef(playlistKey);
   const trackIndexRef = useRef(trackIndex);
   const isPlayingRef = useRef(isPlaying);
-  const nextTrackHandlerRef = useRef(() => {});
+  const nextTrackHandlerRef = useRef(() => { });
   const pendingActionRef = useRef(null);
 
   const currentPlaylist = playlists[playlistKey] || playlists[PLAYLIST_KEYS[0]];
   const tracks = currentPlaylist?.tracks || [];
   const currentTrack = tracks[trackIndex] ?? tracks[0] ?? {};
-
-  const workerRef = useRef(null);
-
-  // Background Web Worker heartbeat (prevents main thread timer throttling on Android Chrome screen off)
-  useEffect(() => {
-    workerRef.current = createBackgroundHeartbeatWorker(() => {
-      if (isPlayingRef.current) {
-        acquireAudioFocus();
-        const player = getPlayer();
-        if (player && typeof player.getPlayerState === 'function') {
-          try {
-            const state = player.getPlayerState();
-            if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED) {
-              if (typeof player.playVideo === 'function') {
-                player.playVideo();
-              }
-            }
-          } catch (e) {}
-        }
-      }
-    });
-
-    return () => {
-      if (workerRef.current) workerRef.current.stop();
-    };
-  }, []);
 
   useEffect(() => {
     activePlaylistKeyRef.current = playlistKey;
@@ -181,12 +125,6 @@ export function PlayerProvider({ children }) {
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
-    if (isPlaying) {
-      acquireAudioFocus();
-      workerRef.current?.start();
-    } else {
-      workerRef.current?.stop();
-    }
   }, [isPlaying]);
 
   // Eagerly auto-sync live YouTube Music playlists in background on app load
@@ -283,21 +221,10 @@ export function PlayerProvider({ children }) {
 
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
-        acquireAudioFocus();
         syncPlaylistTrackIndex(player);
         syncLivePlaylistFromPlayer(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        if (document.hidden && isPlayingRef.current) {
-          acquireAudioFocus();
-          setTimeout(() => {
-            const p = getPlayer();
-            if (p && typeof p.playVideo === 'function') {
-              try { p.playVideo(); } catch (e) {}
-            }
-          }, 60);
-        } else {
-          setIsPlaying(false);
-        }
+        setIsPlaying(false);
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
         const pl = playlists[activePlaylistKeyRef.current];
@@ -331,7 +258,7 @@ export function PlayerProvider({ children }) {
           }
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   useEffect(() => {
@@ -355,13 +282,14 @@ export function PlayerProvider({ children }) {
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
 
         navigator.mediaSession.setActionHandler('play', () => {
-          acquireAudioFocus();
+          setIsPlaying(true);
+          try {
+            navigator.mediaSession.playbackState = 'playing';
+          } catch (e) { }
           const player = getPlayer();
           if (player && typeof player.playVideo === 'function') {
-            try { 
+            try {
               player.playVideo();
-              // Let the player's state change event update isPlaying
-              // Don't set it directly - wait for YouTube player to emit PLAYING state
             } catch (e) {
               console.warn('Error playing from notification:', e);
               togglePlay();
@@ -372,11 +300,14 @@ export function PlayerProvider({ children }) {
         });
 
         navigator.mediaSession.setActionHandler('pause', () => {
+          setIsPlaying(false);
+          try {
+            navigator.mediaSession.playbackState = 'paused';
+          } catch (e) { }
           const player = getPlayer();
           if (player && typeof player.pauseVideo === 'function') {
-            try { 
+            try {
               player.pauseVideo();
-              // Let the player's state change event update isPlaying
             } catch (e) {
               console.warn('Error pausing from notification:', e);
               togglePlay();
@@ -386,8 +317,13 @@ export function PlayerProvider({ children }) {
           }
         });
 
-        navigator.mediaSession.setActionHandler('previoustrack', null);
-        navigator.mediaSession.setActionHandler('nexttrack', null);
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          goPrev();
+        });
+
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          goNext();
+        });
 
         navigator.mediaSession.setActionHandler('seekto', (details) => {
           if (details.seekTime != null) {
@@ -406,10 +342,8 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
-        // Update playback state
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-        
-        // Update position state if available
+
         if ('setPositionState' in navigator.mediaSession) {
           const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
           if (calcDur > 0 && currentTime >= 0) {
@@ -443,7 +377,7 @@ export function PlayerProvider({ children }) {
         if (currentTrack.end != null && rawTime >= currentTrack.end) {
           goNext();
         }
-      } catch (e) {}
+      } catch (e) { }
     }, 400);
 
     return () => clearInterval(interval);
@@ -452,8 +386,6 @@ export function PlayerProvider({ children }) {
   function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
     const player = playerInstance || getPlayer();
     if (!player) return;
-
-    acquireAudioFocus();
 
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
@@ -478,7 +410,7 @@ export function PlayerProvider({ children }) {
             startSeconds: 0,
           });
           if (!autoplay && typeof player.pauseVideo === 'function') {
-            setTimeout(() => { try { player.pauseVideo(); } catch (e) {} }, 500);
+            setTimeout(() => { try { player.pauseVideo(); } catch (e) { } }, 500);
           }
           setCurrentTime(0);
           return;
@@ -513,7 +445,6 @@ export function PlayerProvider({ children }) {
   }
 
   function playTrackAt(pKey, tIndex, { autoplay }) {
-    acquireAudioFocus();
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
       pendingActionRef.current = { pKey, tIndex, autoplay };
@@ -535,14 +466,12 @@ export function PlayerProvider({ children }) {
   }
 
   function selectTrack(pKey, tIndex) {
-    acquireAudioFocus();
     setPlaylistKey(pKey);
     setTrackIndex(tIndex);
     playTrackAt(pKey, tIndex, { autoplay: true });
   }
 
   function goNext() {
-    acquireAudioFocus();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -553,7 +482,6 @@ export function PlayerProvider({ children }) {
   }
 
   function goPrev() {
-    acquireAudioFocus();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -568,7 +496,6 @@ export function PlayerProvider({ children }) {
   });
 
   function togglePlay() {
-    acquireAudioFocus();
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
       playTrackAt(playlistKey, trackIndex, { autoplay: true });
