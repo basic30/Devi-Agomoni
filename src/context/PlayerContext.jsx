@@ -60,7 +60,7 @@ function initPlayer(element) {
           rel: 0,
           modestbranding: 1,
           enablejsapi: 1,
-          origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+          origin: window.location.origin,
         },
         events: {
           onReady: (event) => {
