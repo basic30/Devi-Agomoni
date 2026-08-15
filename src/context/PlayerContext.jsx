@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { playlists, PLAYLIST_KEYS } from '../data/playlists';
-import { createBackgroundHeartbeatWorker } from '../utils/backgroundWorker';
 import { fetchLiveYouTubePlaylist } from '../utils/playlistFetcher';
 
 const PlayerContext = createContext(null);
@@ -20,31 +19,8 @@ let isPlayerReady = false;
 let globalStateChangeHandler = null;
 let globalReadyHandler = null;
 
-// Silent WAV audio loop base64 (Grants Mobile OS Audio Focus & keeps Notification Bar visible)
-const SILENT_AUDIO_WAV = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
-let audioFocusElement = null;
-
-function acquireAudioFocus() {
-  if (typeof window === 'undefined') return;
-  try {
-    if (!audioFocusElement) {
-      audioFocusElement = new Audio(SILENT_AUDIO_WAV);
-      audioFocusElement.loop = true;
-      audioFocusElement.volume = 0.05;
-    }
-    audioFocusElement.play().catch(() => {});
-  } catch (e) {}
-}
-
-function releaseAudioFocus() {
-  if (audioFocusElement) {
-    try {
-      audioFocusElement.pause();
-    } catch (e) {}
-  }
-}
-
 function loadYouTubeIframeApi() {
+  if (typeof window === 'undefined') return Promise.resolve();
   if (window.YT && window.YT.Player) {
     return Promise.resolve(window.YT);
   }
@@ -63,13 +39,7 @@ function loadYouTubeIframeApi() {
   return ytApiPromise;
 }
 
-// Eagerly pre-initialize audioFocusElement & preload YouTube API on module load
 if (typeof window !== 'undefined') {
-  try {
-    audioFocusElement = new Audio(SILENT_AUDIO_WAV);
-    audioFocusElement.loop = true;
-    audioFocusElement.volume = 0.05;
-  } catch (e) {}
   loadYouTubeIframeApi();
 }
 
@@ -89,7 +59,7 @@ function initPlayer(element) {
           rel: 0,
           modestbranding: 1,
           enablejsapi: 1,
-          origin: window.location.origin,
+          origin: typeof window !== 'undefined' ? window.location.origin : undefined,
         },
         events: {
           onReady: (event) => {
@@ -140,36 +110,47 @@ export function PlayerProvider({ children }) {
   const isPlayingRef = useRef(isPlaying);
   const nextTrackHandlerRef = useRef(() => {});
   const pendingActionRef = useRef(null);
+  const wakeLockRef = useRef(null);
 
   const currentPlaylist = playlists[playlistKey] || playlists[PLAYLIST_KEYS[0]];
   const tracks = currentPlaylist?.tracks || [];
   const currentTrack = tracks[trackIndex] ?? tracks[0] ?? {};
 
-  const workerRef = useRef(null);
-
-  // Background Web Worker heartbeat (prevents main thread timer throttling on Android Chrome screen off)
-  useEffect(() => {
-    workerRef.current = createBackgroundHeartbeatWorker(() => {
-      if (isPlayingRef.current) {
-        acquireAudioFocus();
-        const player = getPlayer();
-        if (player && typeof player.getPlayerState === 'function') {
-          try {
-            const state = player.getPlayerState();
-            if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.CUED) {
-              if (typeof player.playVideo === 'function') {
-                player.playVideo();
-              }
-            }
-          } catch (e) {}
-        }
+  // Screen Wake Lock API ("Puja Mode" - keeps screen awake while music is playing)
+  const requestWakeLock = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && !wakeLockRef.current) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+        });
+      } catch (e) {
+        // Wake lock request failed or not allowed
       }
-    });
-
-    return () => {
-      if (workerRef.current) workerRef.current.stop();
-    };
+    }
   }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    if (wakeLockRef.current) {
+      try {
+        wakeLockRef.current.release();
+      } catch (e) {}
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  // Re-acquire wake lock when tab becomes visible again if music is playing
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isPlayingRef.current) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [requestWakeLock]);
 
   useEffect(() => {
     activePlaylistKeyRef.current = playlistKey;
@@ -182,14 +163,13 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     isPlayingRef.current = isPlaying;
     if (isPlaying) {
-      acquireAudioFocus();
-      workerRef.current?.start();
+      requestWakeLock();
     } else {
-      workerRef.current?.stop();
+      releaseWakeLock();
     }
-  }, [isPlaying]);
+  }, [isPlaying, requestWakeLock, releaseWakeLock]);
 
-  // Eagerly auto-sync live YouTube Music playlists in background on app load
+  // Auto-sync live YouTube Music playlists on load
   useEffect(() => {
     Object.values(playlists).forEach((pl) => {
       if (pl.sourceType === 'youtube_playlist' && pl.youtubePlaylistId) {
@@ -218,7 +198,6 @@ export function PlayerProvider({ children }) {
 
       if (missingIds.length === 0) return;
 
-      // Fetch oEmbed details for any newly added songs in YouTube playlist
       const fetchedNewTracks = await Promise.all(
         missingIds.map(async (vId) => {
           try {
@@ -268,6 +247,21 @@ export function PlayerProvider({ children }) {
     }
   }
 
+  function syncPlaylistTrackIndex(player) {
+    if (!player) return;
+    try {
+      if (typeof player.getPlaylistIndex === 'function') {
+        const ytIdx = player.getPlaylistIndex();
+        if (ytIdx != null && ytIdx >= 0 && ytIdx !== trackIndexRef.current) {
+          const pl = playlists[activePlaylistKeyRef.current];
+          if (pl && pl.tracks && pl.tracks[ytIdx]) {
+            setTrackIndex(ytIdx);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   useEffect(() => {
     globalReadyHandler = (player) => {
       if (pendingActionRef.current) {
@@ -283,23 +277,21 @@ export function PlayerProvider({ children }) {
 
       if (event.data === YT_PLAYER_STATES.PLAYING) {
         setIsPlaying(true);
-        acquireAudioFocus();
+        if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'playing';
+        }
         syncPlaylistTrackIndex(player);
         syncLivePlaylistFromPlayer(player);
       } else if (event.data === YT_PLAYER_STATES.PAUSED) {
-        if (document.hidden && isPlayingRef.current) {
-          acquireAudioFocus();
-          setTimeout(() => {
-            const p = getPlayer();
-            if (p && typeof p.playVideo === 'function') {
-              try { p.playVideo(); } catch (e) {}
-            }
-          }, 60);
-        } else {
-          setIsPlaying(false);
+        setIsPlaying(false);
+        if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'paused';
         }
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
         setIsPlaying(false);
+        if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'paused';
+        }
         const pl = playlists[activePlaylistKeyRef.current];
         if (pl) {
           nextTrackHandlerRef.current();
@@ -319,21 +311,7 @@ export function PlayerProvider({ children }) {
     }
   }, []);
 
-  function syncPlaylistTrackIndex(player) {
-    if (!player) return;
-    try {
-      if (typeof player.getPlaylistIndex === 'function') {
-        const ytIdx = player.getPlaylistIndex();
-        if (ytIdx != null && ytIdx >= 0 && ytIdx !== trackIndexRef.current) {
-          const pl = playlists[activePlaylistKeyRef.current];
-          if (pl && pl.tracks && pl.tracks[ytIdx]) {
-            setTrackIndex(ytIdx);
-          }
-        }
-      }
-    } catch (e) {}
-  }
-
+  // MediaSession API Integration with full Lock Screen & Notification Bar Play/Pause/Skip
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
@@ -341,31 +319,28 @@ export function PlayerProvider({ children }) {
         const artist = currentTrack?.subtitle || 'Durga Puja Special';
         const videoId = currentTrack?.videoId || currentPlaylist?.youtubeVideoId;
         const coverUrl = videoId
-          ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg'
+          ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
           : 'https://www.devipaksha.in/thumbnail.png';
 
         navigator.mediaSession.metadata = new MediaMetadata({
           title: title,
           artist: artist,
+          album: currentPlaylist?.label || 'Devi Agomoni',
           artwork: [
             { src: coverUrl, sizes: '512x512', type: 'image/jpeg' },
+            { src: coverUrl, sizes: '256x256', type: 'image/jpeg' },
+            { src: coverUrl, sizes: '128x128', type: 'image/jpeg' },
           ],
         });
 
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
 
         navigator.mediaSession.setActionHandler('play', () => {
-          acquireAudioFocus();
           const player = getPlayer();
           if (player && typeof player.playVideo === 'function') {
-            try { 
+            try {
               player.playVideo();
-              // Let the player's state change event update isPlaying
-              // Don't set it directly - wait for YouTube player to emit PLAYING state
-            } catch (e) {
-              console.warn('Error playing from notification:', e);
-              togglePlay();
-            }
+            } catch (e) {}
           } else {
             togglePlay();
           }
@@ -374,44 +349,64 @@ export function PlayerProvider({ children }) {
         navigator.mediaSession.setActionHandler('pause', () => {
           const player = getPlayer();
           if (player && typeof player.pauseVideo === 'function') {
-            try { 
+            try {
               player.pauseVideo();
-              // Let the player's state change event update isPlaying
-            } catch (e) {
-              console.warn('Error pausing from notification:', e);
-              togglePlay();
-            }
+            } catch (e) {}
           } else {
             togglePlay();
           }
         });
 
-        navigator.mediaSession.setActionHandler('previoustrack', null);
-        navigator.mediaSession.setActionHandler('nexttrack', null);
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          goPrev();
+        });
+
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          goNext();
+        });
 
         navigator.mediaSession.setActionHandler('seekto', (details) => {
           if (details.seekTime != null) {
-            const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
+            const startSec = currentTrack.start ?? 0;
+            const calcDur = Math.max(0, (currentTrack.end ?? duration) - startSec);
             if (calcDur > 0) {
               seekTo(details.seekTime / calcDur);
             }
           }
         });
+
+        navigator.mediaSession.setActionHandler('seekforward', (details) => {
+          const step = details.seekOffset || 10;
+          const startSec = currentTrack.start ?? 0;
+          const calcDur = Math.max(0, (currentTrack.end ?? duration) - startSec);
+          if (calcDur > 0) {
+            seekTo(Math.min(calcDur, currentTime + step) / calcDur);
+          }
+        });
+
+        navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+          const step = details.seekOffset || 10;
+          const startSec = currentTrack.start ?? 0;
+          const calcDur = Math.max(0, (currentTrack.end ?? duration) - startSec);
+          if (calcDur > 0) {
+            seekTo(Math.max(0, currentTime - step) / calcDur);
+          }
+        });
       } catch (e) {
-        console.warn('MediaSession notice:', e);
+        console.warn('MediaSession error:', e);
       }
     }
-  }, [currentTrack, isPlaying, playlistKey, duration]);
+  }, [currentTrack, isPlaying, playlistKey, duration, currentTime]);
 
+  // Position state for lock-screen seek scrubber
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
-        // Update playback state
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-        
-        // Update position state if available
+
         if ('setPositionState' in navigator.mediaSession) {
-          const calcDur = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
+          const startSec = currentTrack.start ?? 0;
+          const calcDur = Math.max(0, (currentTrack.end ?? duration) - startSec);
           if (calcDur > 0 && currentTime >= 0) {
             navigator.mediaSession.setPositionState({
               duration: calcDur,
@@ -420,9 +415,7 @@ export function PlayerProvider({ children }) {
             });
           }
         }
-      } catch (e) {
-        console.warn('Error updating mediaSession state:', e);
-      }
+      } catch (e) {}
     }
   }, [currentTime, duration, currentTrack, isPlaying]);
 
@@ -452,8 +445,6 @@ export function PlayerProvider({ children }) {
   function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
     const player = playerInstance || getPlayer();
     if (!player) return;
-
-    acquireAudioFocus();
 
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
@@ -513,7 +504,6 @@ export function PlayerProvider({ children }) {
   }
 
   function playTrackAt(pKey, tIndex, { autoplay }) {
-    acquireAudioFocus();
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
       pendingActionRef.current = { pKey, tIndex, autoplay };
@@ -535,14 +525,12 @@ export function PlayerProvider({ children }) {
   }
 
   function selectTrack(pKey, tIndex) {
-    acquireAudioFocus();
     setPlaylistKey(pKey);
     setTrackIndex(tIndex);
     playTrackAt(pKey, tIndex, { autoplay: true });
   }
 
   function goNext() {
-    acquireAudioFocus();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -553,7 +541,6 @@ export function PlayerProvider({ children }) {
   }
 
   function goPrev() {
-    acquireAudioFocus();
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
     setTrackIndex((prevIndex) => {
@@ -568,7 +555,6 @@ export function PlayerProvider({ children }) {
   });
 
   function togglePlay() {
-    acquireAudioFocus();
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
       playTrackAt(playlistKey, trackIndex, { autoplay: true });
