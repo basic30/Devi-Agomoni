@@ -41,23 +41,50 @@ export function handleImageFallback(e, videoId) {
   }
 }
 
-function PlaylistPillButton({ label, onOpen }) {
+function PlaylistPillRow({ label, onOpen, isDhakPlaying, onToggleDhak }) {
   return (
-    <div className="mb-2 flex justify-center">
+    <div className="mb-2 flex items-center justify-center gap-2">
       <button
         type="button"
         onClick={onOpen}
         className="
-          inline-flex items-center gap-1.5 rounded-full px-4 py-1.5
-          bg-white/7 backdrop-blur-2xl backdrop-saturate-150
-          border border-[#f1d449]/30
-          text-xs font-semibold uppercase tracking-[0.15em] text-[#f1d449]
-          shadow-[0_4px_20px_rgba(241,212,73,0.15)]
+          inline-flex items-center gap-1.5 rounded-full px-3.5 py-1
+          bg-white/8 backdrop-blur-2xl backdrop-saturate-150
+          border border-[#f1d449]/35
+          text-[11px] font-semibold uppercase tracking-[0.12em] text-[#f1d449]
+          shadow-[0_3px_15px_rgba(241,212,73,0.15)]
           transition hover:bg-[#f1d449]/15 active:scale-95
         "
       >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-[#f1d449]/90">
+          <line x1="4" y1="6" x2="20" y2="6" />
+          <line x1="4" y1="12" x2="15" y2="12" />
+          <line x1="4" y1="18" x2="11" y2="18" />
+        </svg>
         {label}
         <ChevronDownIcon />
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleDhak}
+        aria-label="Play Dhak Sound"
+        className={`
+          inline-flex items-center gap-1.5 rounded-full px-3 py-1
+          backdrop-blur-2xl backdrop-saturate-150
+          text-[11px] font-semibold uppercase tracking-[0.1em]
+          transition active:scale-95
+          ${
+            isDhakPlaying
+              ? 'bg-[#f1d449]/30 border-2 border-[#f1d449] text-[#f1d449] shadow-[0_0_18px_rgba(241,212,73,0.6)] animate-pulse'
+              : 'bg-white/8 border border-[#f1d449]/35 text-[#f1d449] shadow-[0_3px_15px_rgba(241,212,73,0.15)] hover:bg-[#f1d449]/15'
+          }
+        `}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className={isDhakPlaying ? 'animate-bounce' : ''}>
+          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+        </svg>
+        <span>DHAK</span>
       </button>
     </div>
   );
@@ -130,10 +157,40 @@ const SVG_PREV_PATH = "M6 6h2v12H6zm3.5 6l8.5 6V6z";
 const SVG_NEXT_PATH = "M16 6h2v12h-2zm-2 6L5.5 6v12z";
 const SVG_PAUSE_PATH = "M6 5h4v14H6zm8 0h4v14h-4z";
 const SVG_PLAY_PATH = "M8 5v14l11-7z";
+const SVG_SHUFFLE_PATH = "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.45 20 9.5V4h-5.5zm.35 11.09l1.41-1.41 2.25 2.25L20 14.5V20h-5.5l2.04-2.04-2.19-2.87z";
+const SVG_REPEAT_PATH = "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
 
-function PlayerControls({ isPlaying, canSkip, playDisabled, onPrev, onPlayPause, onNext }) {
+function PlayerControls({
+  isPlaying,
+  canSkip,
+  playDisabled,
+  isShuffle,
+  isRepeat,
+  onPrev,
+  onPlayPause,
+  onNext,
+  onToggleShuffle,
+  onToggleRepeat,
+}) {
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-0.5 sm:gap-1">
+      {/* Desktop Shuffle Button */}
+      <button
+        type="button"
+        aria-label="Toggle Shuffle"
+        onClick={onToggleShuffle}
+        className={`hidden sm:grid h-8 w-8 place-items-center rounded-xl transition active:scale-95 ${
+          isShuffle
+            ? 'text-[#f1d449] bg-[#f1d449]/20 drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]'
+            : 'text-white/70 hover:bg-white/15 hover:text-white'
+        }`}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d={SVG_SHUFFLE_PATH} />
+        </svg>
+      </button>
+
+      {/* Previous Track */}
       <button
         type="button"
         aria-label="Previous track"
@@ -146,6 +203,7 @@ function PlayerControls({ isPlaying, canSkip, playDisabled, onPrev, onPlayPause,
         </svg>
       </button>
 
+      {/* Play / Pause */}
       <button
         type="button"
         aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -159,6 +217,7 @@ function PlayerControls({ isPlaying, canSkip, playDisabled, onPrev, onPlayPause,
         </svg>
       </button>
 
+      {/* Next Track */}
       <button
         type="button"
         aria-label="Next track"
@@ -170,12 +229,45 @@ function PlayerControls({ isPlaying, canSkip, playDisabled, onPrev, onPlayPause,
           <path d={SVG_NEXT_PATH} />
         </svg>
       </button>
+
+      {/* Desktop Repeat Button */}
+      <button
+        type="button"
+        aria-label="Toggle Repeat"
+        onClick={onToggleRepeat}
+        className={`hidden sm:grid h-8 w-8 place-items-center rounded-xl transition active:scale-95 ${
+          isRepeat
+            ? 'text-[#f1d449] bg-[#f1d449]/20 drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]'
+            : 'text-white/70 hover:bg-white/15 hover:text-white'
+        }`}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d={SVG_REPEAT_PATH} />
+        </svg>
+      </button>
     </div>
   );
 }
 
 export function PlayerBar({ onOpenPlaylist }) {
-  const { playlist, track, isPlaying, currentTime, duration, canSkip, goNext, goPrev, togglePlay, seekTo } = usePlayer();
+  const {
+    playlist,
+    track,
+    isPlaying,
+    currentTime,
+    duration,
+    canSkip,
+    isShuffle,
+    isRepeat,
+    isDhakPlaying,
+    toggleShuffle,
+    toggleRepeat,
+    toggleDhak,
+    goNext,
+    goPrev,
+    togglePlay,
+    seekTo,
+  } = usePlayer();
   const barRef = useRef(null);
 
   const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
@@ -210,44 +302,130 @@ export function PlayerBar({ onOpenPlaylist }) {
   }
 
   return (
-    <div className="mb-[4vh] flex w-full justify-center px-6">
+    <div className="mb-[3vh] flex w-full justify-center px-4 sm:mb-[4vh] sm:px-6">
       <div className="w-full max-w-md">
-        <PlaylistPillButton label={playlist?.pillLabel || 'PUJA RADIO'} onOpen={onOpenPlaylist} />
+        {/* Desktop Pill Row (Side by side) */}
+        <div className="hidden sm:block">
+          <PlaylistPillRow
+            label={playlist?.pillLabel || 'PUJA RADIO'}
+            onOpen={onOpenPlaylist}
+            isDhakPlaying={isDhakPlaying}
+            onToggleDhak={toggleDhak}
+          />
+        </div>
 
+        {/* Mobile Pill Button (Centered) */}
+        <div className="mb-2 flex justify-center sm:hidden">
+          <button
+            type="button"
+            onClick={onOpenPlaylist}
+            className="
+              inline-flex items-center gap-1.5 rounded-full px-3.5 py-1
+              bg-white/10 backdrop-blur-2xl backdrop-saturate-150
+              border border-[#f1d449]/35
+              text-[11px] font-semibold uppercase tracking-[0.12em] text-[#f1d449]
+              shadow-[0_3px_15px_rgba(241,212,73,0.18)]
+              transition hover:bg-[#f1d449]/20 active:scale-95
+            "
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-[#f1d449]/90">
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="15" y2="12" />
+              <line x1="4" y1="18" x2="11" y2="18" />
+            </svg>
+            {playlist?.pillLabel || 'DURGA PUJA'}
+            <ChevronDownIcon />
+          </button>
+        </div>
+
+        {/* Player Card */}
         <div
           className="
-            group relative flex items-center gap-3.5 rounded-3xl p-3.5
-            bg-white/8 backdrop-blur-2xl backdrop-saturate-150
-            border border-white/15
-            shadow-[0_8px_40px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.25)]
+            group relative flex flex-col rounded-3xl
+            bg-white/10 backdrop-blur-2xl backdrop-saturate-150
+            border border-white/20
+            shadow-[0_8px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.25)]
           "
         >
-          <TrackCover track={track} playlist={playlist} isPlaying={isPlaying} className="w-16 h-16 rounded-2xl" />
+          {/* Main Player Row */}
+          <div className="flex items-center gap-3.5 p-3.5">
+            <TrackCover track={track} playlist={playlist} isPlaying={isPlaying} className="w-16 h-16 rounded-2xl" />
 
-          <div className="flex min-w-0 flex-1 flex-col justify-center">
-            <p className="truncate text-[14px] font-semibold text-white drop-shadow-sm">{track?.title || ''}</p>
-            <p className="truncate text-[11px] text-[#f1d449]/90 font-medium">{track?.subtitle || ''}</p>
+            <div className="flex min-w-0 flex-1 flex-col justify-center">
+              <p className="truncate text-[14px] font-semibold text-white drop-shadow-sm">{track?.title || ''}</p>
+              <p className="truncate text-[11px] text-[#f1d449]/90 font-medium">{track?.subtitle || ''}</p>
 
-            <div className="mt-2">
-              <CurvedProgressBar
-                barRef={barRef}
-                progress={progress}
-                currentTime={currentTime}
-                duration={duration}
-                onClick={handleBarClick}
-                onPointerDown={handlePointerDown}
-              />
+              <div className="mt-2">
+                <CurvedProgressBar
+                  barRef={barRef}
+                  progress={progress}
+                  currentTime={currentTime}
+                  duration={duration}
+                  onClick={handleBarClick}
+                  onPointerDown={handlePointerDown}
+                />
+              </div>
             </div>
+
+            <PlayerControls
+              isPlaying={isPlaying}
+              canSkip={canSkip}
+              playDisabled={isPlayDisabled}
+              isShuffle={isShuffle}
+              isRepeat={isRepeat}
+              onPrev={goPrev}
+              onPlayPause={togglePlay}
+              onNext={goNext}
+              onToggleShuffle={toggleShuffle}
+              onToggleRepeat={toggleRepeat}
+            />
           </div>
 
-          <PlayerControls
-            isPlaying={isPlaying}
-            canSkip={canSkip}
-            playDisabled={isPlayDisabled}
-            onPrev={goPrev}
-            onPlayPause={togglePlay}
-            onNext={goNext}
-          />
+          {/* Mobile Bottom Action Controls Bar (Shuffle | Repeat | Dhak) */}
+          <div className="flex items-center border-t border-white/10 px-3 py-2 sm:hidden">
+            <button
+              type="button"
+              onClick={toggleShuffle}
+              className={`flex flex-1 items-center justify-center gap-1.5 text-[11px] font-medium transition active:scale-95 ${
+                isShuffle ? 'text-[#f1d449] font-semibold drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]' : 'text-white/70 hover:text-white'
+              }`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                <path d={SVG_SHUFFLE_PATH} />
+              </svg>
+              Shuffle
+            </button>
+
+            <span className="h-3 w-px bg-white/15" />
+
+            <button
+              type="button"
+              onClick={toggleRepeat}
+              className={`flex flex-1 items-center justify-center gap-1.5 text-[11px] font-medium transition active:scale-95 ${
+                isRepeat ? 'text-[#f1d449] font-semibold drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]' : 'text-white/70 hover:text-white'
+              }`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                <path d={SVG_REPEAT_PATH} />
+              </svg>
+              Repeat
+            </button>
+
+            <span className="h-3 w-px bg-white/15" />
+
+            <button
+              type="button"
+              onClick={toggleDhak}
+              className={`flex flex-1 items-center justify-center gap-1.5 text-[11px] font-semibold transition active:scale-95 ${
+                isDhakPlaying ? 'text-[#f1d449] animate-pulse drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]' : 'text-white/80 hover:text-white'
+              }`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className={isDhakPlaying ? 'animate-bounce' : ''}>
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+              </svg>
+              Dhak
+            </button>
+          </div>
         </div>
       </div>
     </div>

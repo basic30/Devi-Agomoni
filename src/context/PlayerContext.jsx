@@ -39,6 +39,25 @@ function loadYouTubeIframeApi() {
   return ytApiPromise;
 }
 
+function createBackgroundHeartbeatWorker(callback) {
+  let timerId = null;
+  return {
+    start: () => {
+      if (!timerId) timerId = setInterval(callback, 2000);
+    },
+    stop: () => {
+      if (timerId) {
+        clearInterval(timerId);
+        timerId = null;
+      }
+    },
+  };
+}
+
+function acquireAudioFocus() {
+  // Audio focus helper
+}
+
 // Eagerly pre-initialize audioFocusElement & preload YouTube API on module load
 if (typeof window !== 'undefined') {
   loadYouTubeIframeApi();
@@ -555,11 +574,45 @@ export function PlayerProvider({ children }) {
     playTrackAt(pKey, tIndex, { autoplay: true });
   }
 
+  const [isShuffle, setIsShuffle] = useState(false);
+  const [isRepeat, setIsRepeat] = useState(false);
+  const isShuffleRef = useRef(isShuffle);
+  const isRepeatRef = useRef(isRepeat);
+
+  useEffect(() => {
+    isShuffleRef.current = isShuffle;
+  }, [isShuffle]);
+
+  useEffect(() => {
+    isRepeatRef.current = isRepeat;
+  }, [isRepeat]);
+
+  const toggleShuffle = useCallback(() => {
+    setIsShuffle((prev) => !prev);
+  }, []);
+
+  const toggleRepeat = useCallback(() => {
+    setIsRepeat((prev) => !prev);
+  }, []);
+
   function goNext() {
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
+
+    if (isRepeatRef.current) {
+      playTrackAt(activePlaylistKeyRef.current, trackIndexRef.current, { autoplay: true });
+      return;
+    }
+
     setTrackIndex((prevIndex) => {
-      const nextIdx = (prevIndex + 1) % plTracks.length;
+      let nextIdx;
+      if (isShuffleRef.current && plTracks.length > 1) {
+        do {
+          nextIdx = Math.floor(Math.random() * plTracks.length);
+        } while (nextIdx === prevIndex);
+      } else {
+        nextIdx = (prevIndex + 1) % plTracks.length;
+      }
       playTrackAt(activePlaylistKeyRef.current, nextIdx, { autoplay: true });
       return nextIdx;
     });
@@ -568,8 +621,21 @@ export function PlayerProvider({ children }) {
   function goPrev() {
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
+
+    if (isRepeatRef.current) {
+      playTrackAt(activePlaylistKeyRef.current, trackIndexRef.current, { autoplay: true });
+      return;
+    }
+
     setTrackIndex((prevIndex) => {
-      const prevIdx = (prevIndex - 1 + plTracks.length) % plTracks.length;
+      let prevIdx;
+      if (isShuffleRef.current && plTracks.length > 1) {
+        do {
+          prevIdx = Math.floor(Math.random() * plTracks.length);
+        } while (prevIdx === prevIndex);
+      } else {
+        prevIdx = (prevIndex - 1 + plTracks.length) % plTracks.length;
+      }
       playTrackAt(activePlaylistKeyRef.current, prevIdx, { autoplay: true });
       return prevIdx;
     });
@@ -612,6 +678,46 @@ export function PlayerProvider({ children }) {
     setCurrentTime(norm * trackDuration);
   }
 
+  const [isDhakPlaying, setIsDhakPlaying] = useState(false);
+  const dhakAudioRef = useRef(null);
+
+  useEffect(() => {
+    const audio = new Audio('/dhak.mp3');
+    audio.loop = true;
+    audio.onplay = () => setIsDhakPlaying(true);
+    audio.onpause = () => setIsDhakPlaying(false);
+    audio.onended = () => {
+      if (isRepeatRef.current || audio.loop) {
+        audio.currentTime = 0;
+        audio.play().catch((err) => console.warn('Dhak repeat error:', err));
+      } else {
+        setIsDhakPlaying(false);
+      }
+    };
+    dhakAudioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      dhakAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (dhakAudioRef.current) {
+      dhakAudioRef.current.loop = true;
+    }
+  }, [isRepeat]);
+
+  const toggleDhak = useCallback(() => {
+    if (!dhakAudioRef.current) return;
+    if (dhakAudioRef.current.paused) {
+      dhakAudioRef.current.currentTime = 0;
+      dhakAudioRef.current.play().catch((err) => console.warn('Dhak playback error:', err));
+    } else {
+      dhakAudioRef.current.pause();
+    }
+  }, []);
+
   const calcDuration = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
   const canSkip = tracks.length > 1;
 
@@ -625,6 +731,12 @@ export function PlayerProvider({ children }) {
       currentTime,
       duration: calcDuration,
       canSkip,
+      isShuffle,
+      isRepeat,
+      isDhakPlaying,
+      toggleShuffle,
+      toggleRepeat,
+      toggleDhak,
       selectPlaylist,
       selectTrack,
       goNext,
@@ -632,7 +744,23 @@ export function PlayerProvider({ children }) {
       togglePlay,
       seekTo,
     }),
-    [playlistKey, currentPlaylist, trackIndex, currentTrack, isPlaying, currentTime, calcDuration, canSkip, playlistVersion]
+    [
+      playlistKey,
+      currentPlaylist,
+      trackIndex,
+      currentTrack,
+      isPlaying,
+      currentTime,
+      calcDuration,
+      canSkip,
+      isShuffle,
+      isRepeat,
+      isDhakPlaying,
+      toggleShuffle,
+      toggleRepeat,
+      toggleDhak,
+      playlistVersion,
+    ]
   );
 
   return (
