@@ -123,6 +123,29 @@ export function PlayerProvider({ children }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playlistVersion, setPlaylistVersion] = useState(0);
 
+  const [volume, setVolumeState] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('devi_player_volume');
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) return parsed;
+      }
+    }
+    return 100;
+  });
+  const [isMuted, setIsMuted] = useState(false);
+  const prevVolumeRef = useRef(volume > 0 ? volume : 100);
+  const volumeRef = useRef(volume);
+  const isMutedRef = useRef(isMuted);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
   const containerRef = useRef(null);
   const currentVideoIdRef = useRef(null);
   const activePlaylistKeyRef = useRef(playlistKey);
@@ -275,6 +298,14 @@ export function PlayerProvider({ children }) {
 
   useEffect(() => {
     globalReadyHandler = (player) => {
+      try {
+        if (player && typeof player.setVolume === 'function') {
+          player.setVolume(volumeRef.current);
+          if (volumeRef.current === 0 && typeof player.mute === 'function') {
+            player.mute();
+          }
+        }
+      } catch (e) { }
       if (pendingActionRef.current) {
         const action = pendingActionRef.current;
         pendingActionRef.current = null;
@@ -681,9 +712,55 @@ export function PlayerProvider({ children }) {
   const [isDhakPlaying, setIsDhakPlaying] = useState(false);
   const dhakAudioRef = useRef(null);
 
+  const setVolume = useCallback((newVol) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(newVol)));
+    setVolumeState(clamped);
+    if (clamped > 0) {
+      prevVolumeRef.current = clamped;
+      setIsMuted(false);
+    } else {
+      setIsMuted(true);
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('devi_player_volume', String(clamped));
+      } catch (e) { }
+    }
+
+    const player = getPlayer();
+    if (player) {
+      try {
+        if (typeof player.setVolume === 'function') {
+          player.setVolume(clamped);
+        }
+        if (clamped === 0 && typeof player.mute === 'function') {
+          player.mute();
+        } else if (clamped > 0 && typeof player.unMute === 'function') {
+          player.unMute();
+        }
+      } catch (e) { }
+    }
+
+    if (dhakAudioRef.current) {
+      dhakAudioRef.current.volume = clamped / 100;
+    }
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    if (isMutedRef.current || volumeRef.current === 0) {
+      const targetVol = prevVolumeRef.current > 0 ? prevVolumeRef.current : 100;
+      setVolume(targetVol);
+    } else {
+      prevVolumeRef.current = volumeRef.current;
+      setVolume(0);
+    }
+  }, [setVolume]);
+
   useEffect(() => {
     const audio = new Audio('/dhak.mp3');
     audio.loop = true;
+    audio.volume = volumeRef.current / 100;
     audio.onplay = () => setIsDhakPlaying(true);
     audio.onpause = () => setIsDhakPlaying(false);
     audio.onended = () => {
@@ -712,6 +789,7 @@ export function PlayerProvider({ children }) {
     if (!dhakAudioRef.current) return;
     if (dhakAudioRef.current.paused) {
       dhakAudioRef.current.currentTime = 0;
+      dhakAudioRef.current.volume = volumeRef.current / 100;
       dhakAudioRef.current.play().catch((err) => console.warn('Dhak playback error:', err));
     } else {
       dhakAudioRef.current.pause();
@@ -734,6 +812,10 @@ export function PlayerProvider({ children }) {
       isShuffle,
       isRepeat,
       isDhakPlaying,
+      volume,
+      isMuted,
+      setVolume,
+      toggleMute,
       toggleShuffle,
       toggleRepeat,
       toggleDhak,
@@ -756,6 +838,10 @@ export function PlayerProvider({ children }) {
       isShuffle,
       isRepeat,
       isDhakPlaying,
+      volume,
+      isMuted,
+      setVolume,
+      toggleMute,
       toggleShuffle,
       toggleRepeat,
       toggleDhak,

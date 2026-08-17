@@ -1,6 +1,6 @@
-import React, { useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { usePlayer } from '../context/PlayerContext';
-import { ChevronDownIcon } from './Icons';
+import { ChevronDownIcon, DynamicVolumeIcon } from './Icons';
 
 export function formatTimeLabel(seconds) {
   const totalSec = Math.max(0, Math.floor(seconds));
@@ -114,7 +114,6 @@ function TrackCover({ track, playlist, isPlaying, className }) {
   );
 }
 
-// Beautiful Gold Curved & Glowing Progress Line Component
 function CurvedProgressBar({ barRef, progress, currentTime, duration, onClick, onPointerDown }) {
   return (
     <div>
@@ -129,16 +128,13 @@ function CurvedProgressBar({ barRef, progress, currentTime, duration, onClick, o
         onClick={onClick}
         onPointerDown={onPointerDown}
       >
-        {/* Background Track with Subtle Curve Glow */}
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/15 backdrop-blur-sm">
-          {/* Filled Progress Bar with Gold Theme Gradient */}
           <div
             className="h-full rounded-full bg-gradient-to-r from-amber-500 via-[#f1d449] to-yellow-300 shadow-[0_0_12px_rgba(241,212,73,0.8)] transition-all duration-100"
             style={{ width: `${progress}%` }}
           />
         </div>
 
-        {/* Curved Gold Glowing Handle Thumb */}
         <div
           className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#f1d449] shadow-[0_0_10px_rgba(241,212,73,1)] transition-transform duration-75 group-hover/bar:scale-125"
           style={{ left: `${progress}%` }}
@@ -160,17 +156,144 @@ const SVG_PLAY_PATH = "M8 5v14l11-7z";
 const SVG_SHUFFLE_PATH = "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.45 20 9.5V4h-5.5zm.35 11.09l1.41-1.41 2.25 2.25L20 14.5V20h-5.5l2.04-2.04-2.19-2.87z";
 const SVG_REPEAT_PATH = "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
 
+function VolumeControl({ volume, isMuted, onVolumeChange, onToggleMute, isMobile = false }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handlePointerDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isOpen]);
+
+  const displayVolume = isMuted ? 0 : volume;
+
+  return (
+    <div ref={containerRef} className="relative inline-flex items-center">
+      {isOpen && (
+        <div
+          className={`
+            absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-50
+            flex flex-col items-center gap-2.5 rounded-2xl p-3.5 w-48
+            bg-black/90 backdrop-blur-2xl backdrop-saturate-150
+            border border-[#f1d449]/40
+            shadow-[0_12px_40px_rgba(0,0,0,0.85),0_0_20px_rgba(241,212,73,0.25)]
+          `}
+        >
+          <div className="flex w-full items-center justify-between px-1 text-[11px] font-semibold text-white/90">
+            <button
+              type="button"
+              onClick={onToggleMute}
+              className="flex items-center gap-1.5 hover:text-[#f1d449] transition text-white/80"
+              title="Toggle Mute"
+            >
+              <DynamicVolumeIcon volume={volume} isMuted={isMuted} className="w-3.5 h-3.5 text-[#f1d449]" />
+              <span>{isMuted || volume === 0 ? 'Muted' : 'Volume'}</span>
+            </button>
+            <span className="tabular-nums text-[#f1d449] font-bold text-[12px]">{displayVolume}%</span>
+          </div>
+
+          <div className="relative w-full flex items-center py-1">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={displayVolume}
+              onChange={(e) => onVolumeChange(Number(e.target.value))}
+              className="
+                w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-white/20
+                accent-[#f1d449] focus:outline-none
+                [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#f1d449]
+                [&::-webkit-slider-thumb]:shadow-[0_0_10px_rgba(241,212,73,0.9)]
+                [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4
+                [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#f1d449]
+                [&::-moz-range-thumb]:border-none
+              "
+              aria-label="Volume Slider"
+            />
+          </div>
+
+          <div className="flex w-full justify-between gap-1 pt-1.5 border-t border-white/10 text-[10px] font-medium text-white/70">
+            <button
+              type="button"
+              onClick={onToggleMute}
+              className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-[#f1d449]/20 hover:text-[#f1d449] transition"
+            >
+              {isMuted ? 'Unmute' : 'Mute'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onVolumeChange(50)}
+              className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-[#f1d449]/20 hover:text-[#f1d449] transition"
+            >
+              50%
+            </button>
+            <button
+              type="button"
+              onClick={() => onVolumeChange(100)}
+              className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-[#f1d449]/20 hover:text-[#f1d449] transition"
+            >
+              100%
+            </button>
+          </div>
+
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45 bg-black/90 border-r border-b border-[#f1d449]/40" />
+        </div>
+      )}
+
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setIsOpen((prev) => !prev)}
+          className={`flex flex-1 items-center justify-center gap-1.5 text-[11px] font-medium transition active:scale-95 ${
+            isOpen || isMuted || volume < 100
+              ? 'text-[#f1d449] font-semibold drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]'
+              : 'text-white/70 hover:text-white'
+          }`}
+          aria-label="Adjust Volume"
+        >
+          <DynamicVolumeIcon volume={volume} isMuted={isMuted} className="w-3.5 h-3.5" />
+          Volume
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsOpen((prev) => !prev)}
+          aria-label="Adjust Volume"
+          className={`hidden sm:grid h-8 w-8 place-items-center rounded-xl transition active:scale-95 ${
+            isOpen || isMuted || volume < 100
+              ? 'text-[#f1d449] bg-[#f1d449]/20 drop-shadow-[0_0_8px_rgba(241,212,73,0.8)]'
+              : 'text-white/70 hover:bg-white/15 hover:text-white'
+          }`}
+        >
+          <DynamicVolumeIcon volume={volume} isMuted={isMuted} className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PlayerControls({
   isPlaying,
   canSkip,
   playDisabled,
   isShuffle,
   isRepeat,
+  volume,
+  isMuted,
   onPrev,
   onPlayPause,
   onNext,
   onToggleShuffle,
   onToggleRepeat,
+  onVolumeChange,
+  onToggleMute,
 }) {
   return (
     <div className="flex items-center gap-0.5 sm:gap-1">
@@ -245,6 +368,15 @@ function PlayerControls({
           <path d={SVG_REPEAT_PATH} />
         </svg>
       </button>
+
+      {/* Desktop Volume Control Button */}
+      <VolumeControl
+        volume={volume}
+        isMuted={isMuted}
+        onVolumeChange={onVolumeChange}
+        onToggleMute={onToggleMute}
+        isMobile={false}
+      />
     </div>
   );
 }
@@ -260,6 +392,10 @@ export function PlayerBar({ onOpenPlaylist }) {
     isShuffle,
     isRepeat,
     isDhakPlaying,
+    volume,
+    isMuted,
+    setVolume,
+    toggleMute,
     toggleShuffle,
     toggleRepeat,
     toggleDhak,
@@ -373,15 +509,19 @@ export function PlayerBar({ onOpenPlaylist }) {
               playDisabled={isPlayDisabled}
               isShuffle={isShuffle}
               isRepeat={isRepeat}
+              volume={volume}
+              isMuted={isMuted}
               onPrev={goPrev}
               onPlayPause={togglePlay}
               onNext={goNext}
               onToggleShuffle={toggleShuffle}
               onToggleRepeat={toggleRepeat}
+              onVolumeChange={setVolume}
+              onToggleMute={toggleMute}
             />
           </div>
 
-          {/* Mobile Bottom Action Controls Bar (Shuffle | Repeat | Dhak) */}
+          {/* Mobile Bottom Action Controls Bar (Shuffle | Repeat | Volume | Dhak) */}
           <div className="flex items-center border-t border-white/10 px-3 py-2 sm:hidden">
             <button
               type="button"
@@ -413,6 +553,16 @@ export function PlayerBar({ onOpenPlaylist }) {
 
             <span className="h-3 w-px bg-white/15" />
 
+            <VolumeControl
+              volume={volume}
+              isMuted={isMuted}
+              onVolumeChange={setVolume}
+              onToggleMute={toggleMute}
+              isMobile={true}
+            />
+
+            <span className="h-3 w-px bg-white/15" />
+
             <button
               type="button"
               onClick={toggleDhak}
@@ -431,3 +581,4 @@ export function PlayerBar({ onOpenPlaylist }) {
     </div>
   );
 }
+

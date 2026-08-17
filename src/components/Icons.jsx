@@ -103,3 +103,34 @@ export function SendIcon(props) {
     </svg>
   );
 }
+
+export function VolumeHighIcon(props) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+    </svg>
+  );
+}
+
+export function VolumeLowIcon(props) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z" />
+    </svg>
+  );
+}
+
+export function VolumeXIcon(props) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M16.5 12l3.5 3.5-1.4 1.4-3.5-3.5-3.5 3.5-1.4-1.4 3.5-3.5-3.5-3.5 1.4-1.4 3.5 3.5 3.5-3.5 1.4 1.4-3.5 3.5zM4.5 9v6h4l5 5V4l-5 5h-4z" />
+    </svg>
+  );
+}
+
+export function DynamicVolumeIcon({ volume, isMuted, ...props }) {
+  if (isMuted || volume === 0) return <VolumeXIcon {...props} />;
+  if (volume <= 50) return <VolumeLowIcon {...props} />;
+  return <VolumeHighIcon {...props} />;
+}
+
