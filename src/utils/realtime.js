@@ -67,6 +67,7 @@ class RealtimeBus {
   constructor() {
     this.client = null;
     this.listeners = new Set();
+    this.customTopics = new Set();
     this.connected = false;
     this.init();
   }
@@ -87,7 +88,9 @@ class RealtimeBus {
 
       this.client.on('connect', () => {
         this.connected = true;
-        this.client.subscribe(['devipaksha/presence/v4', 'devipaksha/chat/v4'], (err) => {
+        const defaultTopics = ['devipaksha/presence/v4', 'devipaksha/chat/v4'];
+        const allTopics = [...defaultTopics, ...Array.from(this.customTopics)];
+        this.client.subscribe(allTopics, (err) => {
           if (!err) {
             this.notifyListeners({ type: 'STATUS', connected: true });
           }
@@ -114,10 +117,30 @@ class RealtimeBus {
     }
   }
 
-  publish(topic, data) {
+  subscribeTopic(topic) {
+    if (!topic) return;
+    this.customTopics.add(topic);
     if (this.client && this.connected) {
       try {
-        this.client.publish(topic, JSON.stringify(data));
+        this.client.subscribe(topic);
+      } catch (e) {}
+    }
+  }
+
+  unsubscribeTopic(topic) {
+    if (!topic) return;
+    this.customTopics.delete(topic);
+    if (this.client && this.connected) {
+      try {
+        this.client.unsubscribe(topic);
+      } catch (e) {}
+    }
+  }
+
+  publish(topic, data, options = {}) {
+    if (this.client && this.connected) {
+      try {
+        this.client.publish(topic, JSON.stringify(data), options);
       } catch (e) {}
     }
   }

@@ -407,7 +407,7 @@ export function PlayerBar({ onOpenPlaylist }) {
   const barRef = useRef(null);
 
   const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const isPlayDisabled = !track?.videoId && !playlist?.youtubeVideoId;
+  const isPlayDisabled = !track?.videoId && !playlist?.youtubeVideoId && !playlist?.youtubePlaylistId;
 
   function handleSeekFromEvent(e) {
     const el = barRef.current;

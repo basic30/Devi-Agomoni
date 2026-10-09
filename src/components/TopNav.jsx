@@ -3,6 +3,7 @@ import { getTimePartsInIST } from '../hooks/useTimeOfDay';
 import { usePresence } from '../hooks/usePresence';
 import { SPOTIFY_PLAYLIST_URL, YOUTUBE_MUSIC_PLAYLIST_URL } from '../data/playlists';
 import { SpotifyIcon, YouTubeMusicIcon, DeveloperIcon, ChatIcon } from './Icons';
+import { useFriendGroup } from '../context/FriendGroupContext';
 
 const TARGET_PUJO_DATE = new Date('2026-10-16T00:00:00+05:30');
 const ONE_DAY_MS = 86400000;
@@ -88,7 +89,9 @@ function ActionIconLink({ href, ariaLabel, icon }) {
   );
 }
 
-export function TopNav({ onOpenDeveloper, onOpenChat }) {
+export function TopNav({ onOpenDeveloper, onOpenChat, onOpenFriendGroup }) {
+  const { isInGroup, activeGroup, members, onlineCount, activateGroupSync } = useFriendGroup();
+
   return (
     <nav className="fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3 pt-4 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:justify-normal sm:px-5">
       <div className="hidden sm:flex sm:justify-start">
@@ -101,6 +104,45 @@ export function TopNav({ onOpenDeveloper, onOpenChat }) {
 
       <div className="sm:flex sm:justify-end">
         <div className="flex items-center gap-2">
+          {isInGroup && activeGroup ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (activateGroupSync) activateGroupSync();
+                onOpenFriendGroup();
+              }}
+              className="flex h-11 items-center gap-2 rounded-full border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 backdrop-blur-2xl text-xs font-semibold text-amber-200 transition hover:bg-amber-500/25 active:scale-95 shadow-[0_4px_16px_rgba(245,158,11,0.2)]"
+              title={`Friend Group: ${onlineCount ?? members.length} online, ${members.length || 1} total`}
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+              </span>
+              <span className="max-w-[90px] truncate sm:max-w-[130px] text-white">
+                {activeGroup.groupName}
+              </span>
+              <span className="rounded-full bg-black/40 px-1.5 py-0.5 text-[10px] text-[#f1d449]">
+                👥 {onlineCount ?? members.length}/{members.length || 1}
+              </span>
+            </button>
+          ) : (
+            <div className={PILL_CONTAINER_CLASS}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activateGroupSync) activateGroupSync();
+                  onOpenFriendGroup();
+                }}
+                aria-label="Pujo Adda (Friend Group)"
+                title="Pujo Adda - Listen with Friends"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-white/90 hover:text-white hover:bg-white/10 transition active:scale-95"
+              >
+                <span className="text-sm">👥</span>
+                <span className="hidden sm:inline font-tagline tracking-wide">Pujo Adda</span>
+              </button>
+            </div>
+          )}
+
           <div className={PILL_CONTAINER_CLASS}>
             <button
               type="button"

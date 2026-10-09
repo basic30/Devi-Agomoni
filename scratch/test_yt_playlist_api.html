@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test YT Playlist API</title>
+</head>
+<body>
+  <h1>Testing YouTube Playlist Iframe API</h1>
+  <div id="player"></div>
+  <pre id="output">Loading...</pre>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script>
+    window.onYouTubeIframeAPIReady = function() {
+      const output = document.getElementById('output');
+      output.textContent = 'API Ready. Creating player...';
+
+      const player = new YT.Player('player', {
+        height: '200',
+        width: '200',
+        playerVars: {
+          listType: 'playlist',
+          list: 'PLU7X6UN1WmZ4',
+          autoplay: 0,
+          controls: 0
+        },
+        events: {
+          onReady: function(e) {
+            output.textContent += '\nonReady fired!';
+            setTimeout(function() {
+              const playlist = e.target.getPlaylist();
+              output.textContent += '\nPlaylist videoIds (' + (playlist ? playlist.length : 0) + '): ' + JSON.stringify(playlist);
+            }, 500);
+          },
+          onStateChange: function(e) {
+            output.textContent += '\nState changed to: ' + e.data;
+            if (e.data === YT.PlayerState.CUED || e.data === 5) {
+              const playlist = e.target.getPlaylist();
+              output.textContent += '\nCUED Playlist videoIds (' + (playlist ? playlist.length : 0) + '): ' + JSON.stringify(playlist);
+            }
+          },
+          onError: function(e) {
+            output.textContent += '\nError: ' + e.data;
+          }
+        }
+      });
+    };
+  </script>
+</body>
+</html>

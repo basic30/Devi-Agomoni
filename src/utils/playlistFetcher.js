@@ -1,97 +1,116 @@
-// Helper to dynamically fetch live YouTube playlist tracks without redeploying
+// Dynamic YouTube Playlist Live Fetcher
+// Live-fetches tracks directly from YouTube playlist without any manual code edits.
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const mins = Math.floor(total / 60);
+  const secs = String(total % 60).padStart(2, '0');
+  return total > 0 ? `${mins}:${secs}` : 'YouTube Track';
+}
+
+export function getCachedPlaylist(playlistId) {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('yt_pl_cache_' + playlistId);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) { }
+  return [];
+}
+
+async function fetchFromInvidious(domain, playlistId) {
+  const res = await fetch(`${domain}/api/v1/playlists/${playlistId}`, {
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!res.ok) throw new Error(`${domain} responded with HTTP ${res.status}`);
+  const data = await res.json();
+  const videos = data?.videos;
+  if (!Array.isArray(videos) || videos.length === 0) {
+    throw new Error(`${domain} returned empty videos`);
+  }
+  return videos.map((v) => {
+    const duration = v.lengthSeconds || 0;
+    return {
+      id: `yt-${v.videoId}`,
+      title: v.title,
+      subtitle: (v.author || 'Devi Agomoni').replace(/\s*-\s*Topic$/i, '').trim(),
+      videoId: v.videoId,
+      duration: duration,
+      durationLabel: formatDuration(duration),
+      cover: `https://img.youtube.com/vi/${v.videoId}/hqdefault.jpg`,
+      sourceUrl: `https://www.youtube.com/watch?v=${v.videoId}`,
+    };
+  });
+}
+
+async function fetchFromLocalProxy(playlistId) {
+  const localRes = await fetch(`/api/playlist-feed?id=${playlistId}`, {
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!localRes.ok) throw new Error('Local dev proxy unavailable');
+  const xml = await localRes.text();
+  const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+  let match;
+  const feedTracks = [];
+  while ((match = entryRegex.exec(xml)) !== null) {
+    const entryXml = match[1];
+    const vIdMatch = /<yt:videoId>(.*?)<\/yt:videoId>/.exec(entryXml);
+    const titleMatch = /<title>(.*?)<\/title>/.exec(entryXml);
+    const authorMatch = /<name>(.*?)<\/name>/.exec(entryXml);
+    if (vIdMatch && titleMatch) {
+      const vId = vIdMatch[1];
+      feedTracks.push({
+        id: `yt-${vId}`,
+        title: titleMatch[1],
+        subtitle: (authorMatch ? authorMatch[1] : 'YouTube Music').replace(/\s*-\s*Topic$/i, '').trim(),
+        videoId: vId,
+        duration: 0,
+        durationLabel: 'YouTube Track',
+        cover: `https://img.youtube.com/vi/${vId}/hqdefault.jpg`,
+        sourceUrl: `https://www.youtube.com/watch?v=${vId}`,
+      });
+    }
+  }
+  if (feedTracks.length === 0) throw new Error('Empty RSS feed');
+  return feedTracks;
+}
+
 export async function fetchLiveYouTubePlaylist(playlistId, existingTracks = []) {
-  if (!playlistId) return null;
+  if (!playlistId) return existingTracks || [];
 
-  // 1. Try public Invidious instances (Returns ALL items in playlist without 15-item limit)
-  const invidiousInstances = [
-    'https://invidious.flokinet.to',
-    'https://invidious.privacydev.net',
-    'https://inv.tux.pizza',
-    'https://invidious.drgns.space',
-    'https://invidious.nerdvpn.de',
+  const cacheKey = 'yt_pl_cache_' + playlistId;
+
+  // Race multiple healthy live endpoints concurrently for maximum speed and uptime
+  const fetchers = [
+    fetchFromInvidious('https://invidious.f5.si', playlistId),
+    fetchFromInvidious('https://inv.nadeko.net', playlistId),
   ];
 
-  for (const domain of invidiousInstances) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-      const res = await fetch(`${domain}/api/v1/playlists/${playlistId}`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) continue;
-      const data = await res.json();
-      const videos = data.videos;
-
-      if (Array.isArray(videos) && videos.length > 0) {
-        return videos.map((v) => ({
-          id: `yt-${v.videoId}`,
-          title: v.title,
-          subtitle: v.author || 'YouTube Music',
-          videoId: v.videoId,
-          durationLabel: 'YouTube Track',
-          sourceUrl: `https://www.youtube.com/watch?v=${v.videoId}`,
-        }));
-      }
-    } catch (e) { }
+  // If local dev server is active, include local dev proxy
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    fetchers.push(fetchFromLocalProxy(playlistId));
   }
 
-  // 2. Fallback: YouTube RSS feed
-  const rssUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${playlistId}`;
-  const proxies = [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(rssUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(rssUrl)}`,
-  ];
-
-  for (const proxyUrl of proxies) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-
-      const res = await fetch(proxyUrl, {
-        cache: 'no-cache',
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) continue;
-      const xml = await res.text();
-
-      const entries = [];
-      const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-      let match;
-
-      while ((match = entryRegex.exec(xml)) !== null) {
-        const entryXml = match[1];
-        const videoIdMatch = /<yt:videoId>(.*?)<\/yt:videoId>/.exec(entryXml);
-        const titleMatch = /<title>(.*?)<\/title>/.exec(entryXml);
-        const authorMatch = /<name>(.*?)<\/name>/.exec(entryXml);
-
-        if (videoIdMatch && titleMatch) {
-          entries.push({
-            id: `yt-${videoIdMatch[1]}`,
-            title: titleMatch[1],
-            subtitle: authorMatch ? authorMatch[1] : 'YouTube Music',
-            videoId: videoIdMatch[1],
-            durationLabel: 'YouTube Track',
-            sourceUrl: `https://www.youtube.com/watch?v=${videoIdMatch[1]}`,
-          });
-        }
+  try {
+    const liveTracks = await Promise.any(fetchers);
+    if (Array.isArray(liveTracks) && liveTracks.length > 0) {
+      // Persist to local cache for instant future loads
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(liveTracks));
+          localStorage.setItem('yt_pl_time_' + playlistId, String(Date.now()));
+        } catch (e) { }
       }
-
-      if (entries.length > 0) {
-        if (existingTracks && existingTracks.length > 0) {
-          const fetchedIds = new Set(entries.map((e) => e.videoId));
-          const remainingExisting = existingTracks.filter((t) => !fetchedIds.has(t.videoId));
-          return [...entries, ...remainingExisting];
-        }
-        return entries;
-      }
-    } catch (e) { }
+      return liveTracks;
+    }
+  } catch (err) {
+    console.warn('Live YouTube playlist fetch failed, using fallback:', err);
   }
 
-  return null;
+  // Fallback to cached tracks or existing tracks if all network requests fail
+  const cached = getCachedPlaylist(playlistId);
+  if (cached.length > 0) return cached;
+  return existingTracks || [];
 }

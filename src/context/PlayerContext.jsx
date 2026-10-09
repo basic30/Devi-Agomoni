@@ -54,8 +54,29 @@ function createBackgroundHeartbeatWorker(callback) {
   };
 }
 
+let silentAudioElement = null;
+
 function acquireAudioFocus() {
-  // Audio focus helper
+  if (typeof window === 'undefined') return;
+  try {
+    if (!silentAudioElement) {
+      // Looping silent audio anchor to hold background OS audio focus
+      silentAudioElement = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAP8A');
+      silentAudioElement.loop = true;
+      silentAudioElement.volume = 0.001;
+    }
+    if (silentAudioElement.paused) {
+      silentAudioElement.play().catch(() => {});
+    }
+  } catch (e) {}
+}
+
+function releaseAudioFocus() {
+  if (silentAudioElement && !silentAudioElement.paused) {
+    try {
+      silentAudioElement.pause();
+    } catch (e) {}
+  }
 }
 
 // Eagerly pre-initialize audioFocusElement & preload YouTube API on module load
@@ -116,8 +137,32 @@ function getPlayer() {
 }
 
 export function PlayerProvider({ children }) {
-  const [playlistKey, setPlaylistKey] = useState(PLAYLIST_KEYS[0]);
-  const [trackIndex, setTrackIndex] = useState(0);
+  const [playlistKey, setPlaylistKey] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('devi_last_player_state');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed?.playlistKey && playlists[parsed.playlistKey]) return parsed.playlistKey;
+        }
+      } catch (e) {}
+    }
+    return PLAYLIST_KEYS[0];
+  });
+
+  const [trackIndex, setTrackIndex] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('devi_last_player_state');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (typeof parsed?.trackIndex === 'number') return parsed.trackIndex;
+        }
+      } catch (e) {}
+    }
+    return 0;
+  });
+
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -146,6 +191,11 @@ export function PlayerProvider({ children }) {
     isMutedRef.current = isMuted;
   }, [isMuted]);
 
+  const currentTimeRef = useRef(currentTime);
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
   const containerRef = useRef(null);
   const currentVideoIdRef = useRef(null);
   const activePlaylistKeyRef = useRef(playlistKey);
@@ -154,6 +204,40 @@ export function PlayerProvider({ children }) {
   const nextTrackHandlerRef = useRef(() => { });
   const pendingActionRef = useRef(null);
   const wakeLockRef = useRef(null);
+  const lastLoadedTimeRef = useRef(0);
+
+  const persistPlayerState = useCallback((pk, ti, isPlay, pos) => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('devi_last_player_state', JSON.stringify({
+        playlistKey: pk ?? activePlaylistKeyRef.current,
+        trackIndex: ti ?? trackIndexRef.current,
+        isPlaying: isPlay ?? isPlayingRef.current,
+        position: pos ?? currentTimeRef.current,
+        timestamp: Date.now(),
+      }));
+    } catch (e) {}
+  }, []);
+
+  const requestWakeLock = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && !wakeLockRef.current) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+        });
+      } catch (e) {}
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    if (wakeLockRef.current) {
+      try {
+        wakeLockRef.current.release();
+      } catch (e) {}
+      wakeLockRef.current = null;
+    }
+  }, []);
 
   const currentPlaylist = playlists[playlistKey] || playlists[PLAYLIST_KEYS[0]];
   const tracks = currentPlaylist?.tracks || [];
@@ -185,6 +269,37 @@ export function PlayerProvider({ children }) {
     };
   }, []);
 
+  // Handle visibility changes when screen is locked or tab minimized
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (isPlayingRef.current) {
+          acquireAudioFocus();
+        }
+      } else {
+        if (isPlayingRef.current) {
+          requestWakeLock();
+          const player = getPlayer();
+          if (player && typeof player.getPlayerState === 'function') {
+            try {
+              const state = player.getPlayerState();
+              if (state === YT_PLAYER_STATES.PAUSED || state === YT_PLAYER_STATES.BUFFERING) {
+                player.playVideo();
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [requestWakeLock]);
+
   useEffect(() => {
     activePlaylistKeyRef.current = playlistKey;
   }, [playlistKey]);
@@ -197,11 +312,14 @@ export function PlayerProvider({ children }) {
     isPlayingRef.current = isPlaying;
     if (isPlaying) {
       acquireAudioFocus();
+      requestWakeLock();
       workerRef.current?.start();
     } else {
+      releaseAudioFocus();
+      releaseWakeLock();
       workerRef.current?.stop();
     }
-  }, [isPlaying]);
+  }, [isPlaying, requestWakeLock, releaseWakeLock]);
 
   // Auto-sync live YouTube Music playlists on load
   useEffect(() => {
@@ -225,7 +343,7 @@ export function PlayerProvider({ children }) {
 
       const pKey = activePlaylistKeyRef.current;
       const pl = playlists[pKey];
-      if (!pl || !pl.tracks) return;
+      if (!pl || !pl.tracks || pl.sourceType !== 'youtube_playlist') return;
 
       const existingMap = new Map(pl.tracks.map((t) => [t.videoId, t]));
       const missingIds = videoIds.filter((id) => id && !existingMap.has(id));
@@ -240,19 +358,21 @@ export function PlayerProvider({ children }) {
             const data = await res.json();
             return {
               id: `yt-${vId}`,
-              title: data.title || 'YouTube Track',
-              subtitle: data.author_name || 'YouTube Music',
+              title: data.title || 'Bengali Pujo Song',
+              subtitle: (data.author_name || 'YouTube Music').replace(/\s*-\s*Topic$/i, '').trim(),
               videoId: vId,
               durationLabel: 'YouTube Track',
+              cover: `https://img.youtube.com/vi/${vId}/hqdefault.jpg`,
               sourceUrl: `https://www.youtube.com/watch?v=${vId}`,
             };
           } catch (e) {
             return {
               id: `yt-${vId}`,
-              title: 'YouTube Track',
+              title: 'Bengali Pujo Song',
               subtitle: 'YouTube Music',
               videoId: vId,
               durationLabel: 'YouTube Track',
+              cover: `https://img.youtube.com/vi/${vId}/hqdefault.jpg`,
               sourceUrl: `https://www.youtube.com/watch?v=${vId}`,
             };
           }
@@ -335,13 +455,25 @@ export function PlayerProvider({ children }) {
           setIsPlaying(false);
         }
       } else if (event.data === YT_PLAYER_STATES.ENDED) {
+        // Guard against premature or false ENDED events during video loading, unmounting, or remote sync
+        if (isRemoteSyncRef.current || Date.now() - lastLoadedTimeRef.current < 4000) {
+          return;
+        }
+
+        const rawCurTime = player?.getCurrentTime?.() || currentTimeRef.current;
+        const totalDur = player?.getDuration?.() || 0;
+        // If track duration is known and player hasn't reached within 3 seconds of end, ignore false ENDED
+        if (totalDur > 10 && rawCurTime < totalDur - 3.5) {
+          return;
+        }
+
         setIsPlaying(false);
         if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
           navigator.mediaSession.playbackState = 'paused';
         }
         const pl = playlists[activePlaylistKeyRef.current];
         if (pl) {
-          nextTrackHandlerRef.current();
+          nextTrackHandlerRef.current({ isManual: false });
         }
       }
 
@@ -508,8 +640,8 @@ export function PlayerProvider({ children }) {
         const elapsedTime = Math.max(0, rawTime - startTime);
         setCurrentTime(elapsedTime);
 
-        if (currentTrack.end != null && rawTime >= currentTrack.end) {
-          goNext();
+        if (currentTrack.end != null && rawTime >= currentTrack.end && !isRemoteSyncRef.current && Date.now() - lastLoadedTimeRef.current > 4000) {
+          goNext({ isManual: false });
         }
       } catch (e) { }
     }, 400);
@@ -517,7 +649,35 @@ export function PlayerProvider({ children }) {
     return () => clearInterval(interval);
   }, [isPlaying, playlistKey, trackIndex, currentTrack.start, currentTrack.end]);
 
-  function executePlayAction(pKey, tIndex, autoplay, playerInstance) {
+  const onGroupSyncCallbackRef = useRef(null);
+  const isRemoteSyncRef = useRef(false);
+
+  function notifyGroupSync(action, pKey, tIndex, isPlay, pos) {
+    if (isRemoteSyncRef.current) return;
+    if (typeof onGroupSyncCallbackRef.current === 'function') {
+      try {
+        const pk = pKey ?? activePlaylistKeyRef.current;
+        const ti = tIndex ?? trackIndexRef.current;
+        const curPl = playlists[pk];
+        const curTrk = curPl?.tracks?.[ti] || curPl?.tracks?.[0] || {};
+        onGroupSyncCallbackRef.current({
+          action,
+          playlistKey: pk,
+          trackIndex: ti,
+          trackTitle: curTrk.title || 'Pujo Song',
+          videoId: curTrk.videoId || curPl?.youtubeVideoId,
+          isPlaying: isPlay ?? isPlayingRef.current,
+          position: pos != null ? pos : currentTime,
+          sentAt: Date.now(),
+        });
+      } catch (e) {
+        console.warn('Group sync broadcast error:', e);
+      }
+    }
+  }
+
+  function executePlayAction(pKey, tIndex, autoplay, playerInstance, customStartSec) {
+    lastLoadedTimeRef.current = Date.now();
     const player = playerInstance || getPlayer();
     if (!player) return;
 
@@ -525,10 +685,10 @@ export function PlayerProvider({ children }) {
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
 
     const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
-    const startSec = targetTrack?.start ?? 0;
+    const startSec = customStartSec != null ? customStartSec : (targetTrack?.start ?? 0);
 
     try {
-      if (targetPlaylist?.sourceType === 'youtube_playlist' && targetPlaylist?.youtubePlaylistId) {
+      if (targetPlaylist?.sourceType === 'youtube_playlist' && targetPlaylist?.youtubePlaylistId && !targetTrack?.videoId) {
         if (typeof player.loadPlaylist === 'function') {
           if (currentVideoIdRef.current === targetPlaylist.youtubePlaylistId) {
             if (typeof player.playVideoAt === 'function') {
@@ -541,12 +701,12 @@ export function PlayerProvider({ children }) {
             list: targetPlaylist.youtubePlaylistId,
             listType: 'playlist',
             index: tIndex || 0,
-            startSeconds: 0,
+            startSeconds: startSec || 0,
           });
           if (!autoplay && typeof player.pauseVideo === 'function') {
             setTimeout(() => { try { player.pauseVideo(); } catch (e) { } }, 500);
           }
-          setCurrentTime(0);
+          setCurrentTime(startSec || 0);
           return;
         }
       }
@@ -572,23 +732,23 @@ export function PlayerProvider({ children }) {
           }
         }
       }
-      setCurrentTime(0);
+      setCurrentTime(startSec || 0);
     } catch (err) {
       console.warn('Error performing player action:', err);
     }
   }
 
-  function playTrackAt(pKey, tIndex, { autoplay }) {
+  function playTrackAt(pKey, tIndex, { autoplay, startSeconds } = {}) {
     const player = getPlayer();
     if (!player || typeof player.loadVideoById !== 'function') {
-      pendingActionRef.current = { pKey, tIndex, autoplay };
+      pendingActionRef.current = { pKey, tIndex, autoplay, customStartSec: startSeconds };
       if (containerRef.current) {
         initPlayer(containerRef.current);
       }
       return;
     }
 
-    executePlayAction(pKey, tIndex, autoplay, player);
+    executePlayAction(pKey, tIndex, autoplay, player, startSeconds);
   }
 
   function selectPlaylist(pKey) {
@@ -596,6 +756,7 @@ export function PlayerProvider({ children }) {
       setPlaylistKey(pKey);
       setTrackIndex(0);
       playTrackAt(pKey, 0, { autoplay: false });
+      notifyGroupSync('MANUAL_TRACK_CHANGE', pKey, 0, false, 0);
     }
   }
 
@@ -603,6 +764,7 @@ export function PlayerProvider({ children }) {
     setPlaylistKey(pKey);
     setTrackIndex(tIndex);
     playTrackAt(pKey, tIndex, { autoplay: true });
+    notifyGroupSync('MANUAL_TRACK_CHANGE', pKey, tIndex, true, 0);
   }
 
   const [isShuffle, setIsShuffle] = useState(false);
@@ -626,7 +788,8 @@ export function PlayerProvider({ children }) {
     setIsRepeat((prev) => !prev);
   }, []);
 
-  function goNext() {
+  function goNext(options = {}) {
+    const isManual = options?.isManual !== false;
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
 
@@ -645,11 +808,13 @@ export function PlayerProvider({ children }) {
         nextIdx = (prevIndex + 1) % plTracks.length;
       }
       playTrackAt(activePlaylistKeyRef.current, nextIdx, { autoplay: true });
+      notifyGroupSync(isManual ? 'MANUAL_TRACK_CHANGE' : 'AUTO_NEXT', activePlaylistKeyRef.current, nextIdx, true, 0);
       return nextIdx;
     });
   }
 
-  function goPrev() {
+  function goPrev(options = {}) {
+    const isManual = options?.isManual !== false;
     const plTracks = playlists[activePlaylistKeyRef.current]?.tracks || [];
     if (plTracks.length === 0) return;
 
@@ -668,6 +833,7 @@ export function PlayerProvider({ children }) {
         prevIdx = (prevIndex - 1 + plTracks.length) % plTracks.length;
       }
       playTrackAt(activePlaylistKeyRef.current, prevIdx, { autoplay: true });
+      notifyGroupSync(isManual ? 'MANUAL_TRACK_CHANGE' : 'AUTO_NEXT', activePlaylistKeyRef.current, prevIdx, true, 0);
       return prevIdx;
     });
   }
@@ -680,11 +846,13 @@ export function PlayerProvider({ children }) {
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
       playTrackAt(playlistKey, trackIndex, { autoplay: true });
+      notifyGroupSync('PLAY', playlistKey, trackIndex, true, 0);
       return;
     }
 
     if (isPlaying) {
       if (typeof player.pauseVideo === 'function') player.pauseVideo();
+      notifyGroupSync('PAUSE', playlistKey, trackIndex, false, (player?.getCurrentTime?.() || currentTime));
     } else {
       const expectedVideoId = currentTrack.videoId || currentPlaylist.youtubeVideoId;
       if (currentVideoIdRef.current === expectedVideoId) {
@@ -692,6 +860,7 @@ export function PlayerProvider({ children }) {
       } else {
         playTrackAt(playlistKey, trackIndex, { autoplay: true });
       }
+      notifyGroupSync('PLAY', playlistKey, trackIndex, true, (player?.getCurrentTime?.() || currentTime));
     }
   }
 
@@ -707,6 +876,7 @@ export function PlayerProvider({ children }) {
 
     player.seekTo(targetSec, true);
     setCurrentTime(norm * trackDuration);
+    notifyGroupSync('SEEK', playlistKey, trackIndex, isPlaying, targetSec);
   }
 
   const [isDhakPlaying, setIsDhakPlaying] = useState(false);
@@ -796,6 +966,86 @@ export function PlayerProvider({ children }) {
     }
   }, []);
 
+  const refreshLivePlaylist = useCallback(async (pKey) => {
+    const pl = playlists[pKey];
+    if (pl && pl.sourceType === 'youtube_playlist' && pl.youtubePlaylistId) {
+      try {
+        const liveTracks = await fetchLiveYouTubePlaylist(pl.youtubePlaylistId, pl.tracks);
+        if (liveTracks && liveTracks.length > 0) {
+          pl.tracks = liveTracks;
+          setPlaylistVersion((v) => v + 1);
+          return liveTracks;
+        }
+      } catch (e) {
+        console.warn('refreshLivePlaylist failed:', e);
+      }
+    }
+    return pl?.tracks || [];
+  }, []);
+
+  const registerGroupSync = useCallback((callback) => {
+    onGroupSyncCallbackRef.current = callback;
+    return () => {
+      onGroupSyncCallbackRef.current = null;
+    };
+  }, []);
+
+  const getCurrentPlayerState = useCallback(() => {
+    const player = getPlayer();
+    const curTime = (player && typeof player.getCurrentTime === 'function') ? player.getCurrentTime() : currentTimeRef.current;
+    const pk = activePlaylistKeyRef.current;
+    const ti = trackIndexRef.current;
+    const curPl = playlists[pk];
+    const curTrk = curPl?.tracks?.[ti] || curPl?.tracks?.[0] || {};
+    return {
+      playlistKey: pk,
+      trackIndex: ti,
+      trackTitle: curTrk.title || 'Pujo Song',
+      videoId: curTrk.videoId || curPl?.youtubeVideoId,
+      isPlaying: isPlayingRef.current,
+      position: curTime,
+      sentAt: Date.now(),
+    };
+  }, []);
+
+  const applyRemoteSync = useCallback((syncEvent) => {
+    if (!syncEvent) return;
+    const player = getPlayer();
+    const { playlistKey: remotePKey, trackIndex: remoteTIndex, position = 0, isPlaying: remoteIsPlaying, sentAt } = syncEvent;
+
+    isRemoteSyncRef.current = true;
+    lastLoadedTimeRef.current = Date.now();
+
+    // Latency compensation
+    const latencySec = sentAt ? Math.max(0, (Date.now() - sentAt) / 1000) : 0;
+    const targetSec = remoteIsPlaying ? (position + latencySec) : position;
+
+    const targetPlaylist = playlists[remotePKey];
+    const targetTrack = targetPlaylist?.tracks?.[remoteTIndex] || targetPlaylist?.tracks?.[0];
+    const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
+
+    if (remotePKey && (remotePKey !== activePlaylistKeyRef.current || remoteTIndex !== trackIndexRef.current || currentVideoIdRef.current !== videoId)) {
+      setPlaylistKey(remotePKey);
+      setTrackIndex(remoteTIndex);
+      executePlayAction(remotePKey, remoteTIndex, remoteIsPlaying, player, targetSec);
+    } else if (player) {
+      if (Math.abs((player.getCurrentTime?.() || 0) - targetSec) > 1.8) {
+        try { player.seekTo(targetSec, true); } catch (e) {}
+      }
+      if (remoteIsPlaying) {
+        try { player.playVideo(); } catch (e) {}
+        setIsPlaying(true);
+      } else {
+        try { player.pauseVideo(); } catch (e) {}
+        setIsPlaying(false);
+      }
+    }
+
+    setTimeout(() => {
+      isRemoteSyncRef.current = false;
+    }, 3500);
+  }, []);
+
   const calcDuration = Math.max(0, (currentTrack.end ?? duration) - (currentTrack.start ?? 0));
   const canSkip = tracks.length > 1;
 
@@ -803,8 +1053,10 @@ export function PlayerProvider({ children }) {
     () => ({
       playlistKey,
       playlist: currentPlaylist,
+      currentPlaylist,
       trackIndex,
       track: currentTrack,
+      currentTrack,
       isPlaying,
       currentTime,
       duration: calcDuration,
@@ -825,6 +1077,11 @@ export function PlayerProvider({ children }) {
       goPrev,
       togglePlay,
       seekTo,
+      refreshLivePlaylist,
+      registerGroupSync,
+      getCurrentPlayerState,
+      applyRemoteSync,
+      playlistVersion,
     }),
     [
       playlistKey,
@@ -845,6 +1102,10 @@ export function PlayerProvider({ children }) {
       toggleShuffle,
       toggleRepeat,
       toggleDhak,
+      refreshLivePlaylist,
+      registerGroupSync,
+      getCurrentPlayerState,
+      applyRemoteSync,
       playlistVersion,
     ]
   );
@@ -856,11 +1117,14 @@ export function PlayerProvider({ children }) {
         ref={containerRef}
         style={{
           position: 'fixed',
-          top: -9999,
-          left: -9999,
-          width: 1,
-          height: 1,
-          opacity: 0,
+          bottom: 0,
+          right: 0,
+          width: '200px',
+          height: '200px',
+          opacity: 0.001,
+          pointerEvents: 'none',
+          zIndex: -1,
+          transform: 'translate3d(0, 0, 0)',
         }}
         aria-hidden="true"
       />
