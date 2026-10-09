@@ -57,12 +57,16 @@ function createBackgroundHeartbeatWorker(callback) {
 let nativeAudioElement = null;
 
 function getAudioProxyUrl() {
-  if (typeof window === 'undefined') return '';
+  if (typeof window !== 'undefined') {
+    if (window.__DEVI_AUDIO_PROXY_URL__) return window.__DEVI_AUDIO_PROXY_URL__;
+    try {
+      const stored = localStorage.getItem('devi_audio_proxy_url');
+      if (stored) return stored;
+    } catch (e) {}
+  }
   return (
-    localStorage.getItem('devi_audio_proxy_url') ||
-    window.__DEVI_AUDIO_PROXY_URL__ ||
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_AUDIO_PROXY_URL) ||
-    ''
+    import.meta.env.VITE_AUDIO_PROXY_URL ||
+    'https://deviagomoni-audio-proxy.onrender.com'
   );
 }
 
@@ -300,11 +304,25 @@ export function PlayerProvider({ children }) {
       }
     };
 
+    const onError = (e) => {
+      console.warn('Native audio stream error or network timeout, falling back to YouTube iframe:', e);
+      const player = getPlayer();
+      const vId = currentVideoIdRef.current;
+      if (player && vId && typeof player.loadVideoById === 'function') {
+        const resumeSec = audio.currentTime || 0;
+        player.loadVideoById({ videoId: vId, startSeconds: resumeSec });
+        if (isPlayingRef.current && typeof player.playVideo === 'function') {
+          try { player.playVideo(); } catch (err) {}
+        }
+      }
+    };
+
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('durationchange', onDurationChange);
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
 
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate);
@@ -312,6 +330,7 @@ export function PlayerProvider({ children }) {
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
     };
   }, []);
 
@@ -600,12 +619,21 @@ export function PlayerProvider({ children }) {
 
         navigator.mediaSession.setActionHandler('play', () => {
           acquireAudioFocus();
+          const proxyBase = getAudioProxyUrl();
+          const audio = initNativeAudio();
+          if (proxyBase && audio && audio.src) {
+            audio.play().then(() => {
+              setIsPlaying(true);
+            }).catch((e) => {
+              console.warn('Native audio play error from notification:', e);
+              togglePlay();
+            });
+            return;
+          }
           const player = getPlayer();
           if (player && typeof player.playVideo === 'function') {
             try {
               player.playVideo();
-              // Let the player's state change event update isPlaying
-              // Don't set it directly - wait for YouTube player to emit PLAYING state
             } catch (e) {
               console.warn('Error playing from notification:', e);
               togglePlay();
@@ -616,6 +644,16 @@ export function PlayerProvider({ children }) {
         });
 
         navigator.mediaSession.setActionHandler('pause', () => {
+          const proxyBase = getAudioProxyUrl();
+          const audio = initNativeAudio();
+          if (proxyBase && audio && audio.src) {
+            audio.pause();
+            setIsPlaying(false);
+            try {
+              navigator.mediaSession.playbackState = 'paused';
+            } catch (e) {}
+            return;
+          }
           setIsPlaying(false);
           try {
             navigator.mediaSession.playbackState = 'paused';
@@ -624,7 +662,6 @@ export function PlayerProvider({ children }) {
           if (player && typeof player.pauseVideo === 'function') {
             try {
               player.pauseVideo();
-              // Let the player's state change event update isPlaying
             } catch (e) {
               console.warn('Error pausing from notification:', e);
               togglePlay();
@@ -748,16 +785,8 @@ export function PlayerProvider({ children }) {
 
   function executePlayAction(pKey, tIndex, autoplay, playerInstance, customStartSec) {
     lastLoadedTimeRef.current = Date.now();
-    const player = playerInstance || getPlayer();
-    if (!player || typeof player.loadVideoById !== 'function') {
-      pendingActionRef.current = { pKey, tIndex, autoplay, customStartSec };
-      if (containerRef.current) initPlayer(containerRef.current);
-      return;
-    }
-
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
-
     const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
     const startSec = customStartSec != null ? customStartSec : (targetTrack?.start ?? 0);
 
@@ -780,7 +809,8 @@ export function PlayerProvider({ children }) {
             setIsPlaying(true);
             acquireAudioFocus();
           }).catch((err) => {
-            console.warn('Native audio play notice:', err);
+            console.warn('Native audio play error, falling back to YouTube iframe:', err);
+            const player = playerInstance || getPlayer();
             if (player && typeof player.loadVideoById === 'function') {
               player.loadVideoById({ videoId, startSeconds: startSec });
             }
@@ -792,6 +822,13 @@ export function PlayerProvider({ children }) {
         setCurrentTime(startSec || 0);
         return;
       }
+    }
+
+    const player = playerInstance || getPlayer();
+    if (!player || typeof player.loadVideoById !== 'function') {
+      pendingActionRef.current = { pKey, tIndex, autoplay, customStartSec };
+      if (containerRef.current) initPlayer(containerRef.current);
+      return;
     }
 
     try {
@@ -950,6 +987,27 @@ export function PlayerProvider({ children }) {
   });
 
   function togglePlay() {
+    const proxyBase = getAudioProxyUrl();
+    const audio = initNativeAudio();
+    if (proxyBase && audio && audio.src) {
+      if (isPlaying) {
+        audio.pause();
+        setIsPlaying(false);
+        notifyGroupSync('PAUSE', playlistKey, trackIndex, false, audio.currentTime || currentTime);
+      } else {
+        audio.play().then(() => {
+          setIsPlaying(true);
+          acquireAudioFocus();
+        }).catch((err) => {
+          console.warn('Native audio play error, trying iframe:', err);
+          const player = getPlayer();
+          if (player && typeof player.playVideo === 'function') player.playVideo();
+        });
+        notifyGroupSync('PLAY', playlistKey, trackIndex, true, audio.currentTime || currentTime);
+      }
+      return;
+    }
+
     const player = getPlayer();
     if (!player || typeof player.playVideo !== 'function') {
       playTrackAt(playlistKey, trackIndex, { autoplay: true });
@@ -973,13 +1031,24 @@ export function PlayerProvider({ children }) {
 
   function seekTo(fraction) {
     const norm = Math.min(1, Math.max(0, fraction));
-    const player = getPlayer();
-    if (!player || typeof player.seekTo !== 'function') return;
-
     const startSec = currentTrack.start ?? 0;
     const endSec = currentTrack.end ?? duration;
     const trackDuration = Math.max(0, endSec - startSec);
     const targetSec = startSec + norm * trackDuration;
+
+    const proxyBase = getAudioProxyUrl();
+    const audio = initNativeAudio();
+    if (proxyBase && audio && audio.src) {
+      try {
+        audio.currentTime = targetSec;
+      } catch (e) {}
+      setCurrentTime(norm * trackDuration);
+      notifyGroupSync('SEEK', playlistKey, trackIndex, isPlaying, targetSec);
+      return;
+    }
+
+    const player = getPlayer();
+    if (!player || typeof player.seekTo !== 'function') return;
 
     player.seekTo(targetSec, true);
     setCurrentTime(norm * trackDuration);
@@ -1003,6 +1072,12 @@ export function PlayerProvider({ children }) {
       try {
         localStorage.setItem('devi_player_volume', String(clamped));
       } catch (e) { }
+    }
+
+    const audio = initNativeAudio();
+    if (audio) {
+      audio.volume = clamped / 100;
+      audio.muted = (clamped === 0);
     }
 
     const player = getPlayer();
@@ -1099,6 +1174,11 @@ export function PlayerProvider({ children }) {
 
   const unlockAudio = useCallback(() => {
     acquireAudioFocus();
+    const proxyBase = getAudioProxyUrl();
+    const audio = initNativeAudio();
+    if (proxyBase && audio && audio.src && audio.paused) {
+      audio.play().catch(() => {});
+    }
     const player = getPlayer();
     if (player) {
       try {
@@ -1115,8 +1195,18 @@ export function PlayerProvider({ children }) {
   }, []);
 
   const getCurrentPlayerState = useCallback(() => {
+    const proxyBase = getAudioProxyUrl();
+    const audio = initNativeAudio();
+    let curTime = currentTimeRef.current;
+    if (proxyBase && audio && audio.src && !isNaN(audio.currentTime) && audio.currentTime > 0) {
+      curTime = audio.currentTime;
+    } else {
+      const player = getPlayer();
+      if (player && typeof player.getCurrentTime === 'function') {
+        curTime = player.getCurrentTime();
+      }
+    }
     const player = getPlayer();
-    const curTime = (player && typeof player.getCurrentTime === 'function') ? player.getCurrentTime() : currentTimeRef.current;
     const pk = activePlaylistKeyRef.current;
     const ti = trackIndexRef.current;
     const curPl = playlists[pk];
@@ -1147,6 +1237,32 @@ export function PlayerProvider({ children }) {
     const targetPlaylist = playlists[remotePKey];
     const targetTrack = targetPlaylist?.tracks?.[remoteTIndex] || targetPlaylist?.tracks?.[0];
     const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
+
+    const proxyBase = getAudioProxyUrl();
+    const audio = initNativeAudio();
+
+    if (proxyBase && audio) {
+      if (remotePKey && (remotePKey !== activePlaylistKeyRef.current || remoteTIndex !== trackIndexRef.current || currentVideoIdRef.current !== videoId)) {
+        setPlaylistKey(remotePKey);
+        setTrackIndex(remoteTIndex);
+        executePlayAction(remotePKey, remoteTIndex, remoteIsPlaying, player, targetSec);
+      } else {
+        if (Math.abs(audio.currentTime - targetSec) > 1.8) {
+          try { audio.currentTime = targetSec; } catch (e) {}
+        }
+        if (remoteIsPlaying) {
+          audio.play().then(() => setIsPlaying(true)).catch(() => {});
+        } else {
+          audio.pause();
+          setIsPlaying(false);
+        }
+      }
+      setCurrentTime(targetSec);
+      setTimeout(() => {
+        isRemoteSyncRef.current = false;
+      }, 3500);
+      return;
+    }
 
     if (!player || typeof player.loadVideoById !== 'function') {
       // YouTube player is still initializing! Store in pendingActionRef and update React state immediately
