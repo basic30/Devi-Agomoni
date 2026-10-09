@@ -69,6 +69,7 @@ class RealtimeBus {
     this.listeners = new Set();
     this.customTopics = new Set();
     this.connected = false;
+    this.pendingPublishes = [];
     this.init();
   }
 
@@ -95,6 +96,16 @@ class RealtimeBus {
             this.notifyListeners({ type: 'STATUS', connected: true });
           }
         });
+
+        if (this.pendingPublishes.length > 0) {
+          const queue = [...this.pendingPublishes];
+          this.pendingPublishes = [];
+          queue.forEach(({ topic, data, options }) => {
+            try {
+              this.client.publish(topic, JSON.stringify(data), options);
+            } catch (e) {}
+          });
+        }
       });
 
       this.client.on('message', (topic, payload) => {
@@ -142,6 +153,11 @@ class RealtimeBus {
       try {
         this.client.publish(topic, JSON.stringify(data), options);
       } catch (e) {}
+    } else {
+      this.pendingPublishes.push({ topic, data, options });
+      if (this.pendingPublishes.length > 25) {
+        this.pendingPublishes.shift();
+      }
     }
   }
 

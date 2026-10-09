@@ -40,6 +40,8 @@ export function FriendGroupModal({ open, onClose, onOpenPlaylist, initialCode = 
     sendReaction,
     isSyncConnected,
     activateGroupSync,
+    isBroadcaster,
+    broadcasterName,
   } = useFriendGroup();
 
   // Activate group audio sync when user opens the group modal
@@ -75,6 +77,7 @@ export function FriendGroupModal({ open, onClose, onOpenPlaylist, initialCode = 
   const [copyStatus, setCopyStatus] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [syncToast, setSyncToast] = useState('');
 
   const chatScrollRef = useRef(null);
 
@@ -123,6 +126,7 @@ export function FriendGroupModal({ open, onClose, onOpenPlaylist, initialCode = 
 
   const handleJoin = async (e) => {
     e.preventDefault();
+    if (activateGroupSync) activateGroupSync();
     setErrorMessage('');
     const code = inviteCodeInput.trim().toUpperCase().replace(/\s+/g, '');
     if (!code) {
@@ -460,10 +464,15 @@ export function FriendGroupModal({ open, onClose, onOpenPlaylist, initialCode = 
                   {copyStatus}
                 </div>
               )}
+              {syncToast && (
+                <div className="text-[11px] font-medium text-amber-300 animate-fadeIn">
+                  {syncToast}
+                </div>
+              )}
             </div>
 
-            {/* Now Playing Synced Music Player Bar */}
-            <div className="border-b border-white/10 bg-gradient-to-r from-amber-950/30 via-black/40 to-black/30 px-5 py-2.5">
+            {/* Now Playing Synced Live Radio Stream Bar */}
+            <div className="border-b border-white/10 bg-gradient-to-r from-amber-950/40 via-black/50 to-black/30 px-5 py-2.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-white/10 ring-1 ring-white/15">
@@ -479,8 +488,8 @@ export function FriendGroupModal({ open, onClose, onOpenPlaylist, initialCode = 
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                        Synced Audio
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                        {isBroadcaster ? '🎙️ YOUR LIVE BROADCAST' : '📻 LIVE RADIO STREAM'}
                       </span>
                       {isPlaying && (
                         <div className="flex items-center gap-0.5">
@@ -494,48 +503,79 @@ export function FriendGroupModal({ open, onClose, onOpenPlaylist, initialCode = 
                       {activeTrack?.title || 'No song selected'}
                     </p>
                     <p className="truncate text-[10px] text-white/50">
-                      {activeTrack?.subtitle || activePlaylist?.label || 'Durga Puja'}
+                      {isBroadcaster ? 'You have full DJ control over the stream' : `Streaming live from ${broadcasterName || 'Radio Host'}`}
                     </p>
                   </div>
                 </div>
 
                 {/* Synced playback controls */}
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={goPrev}
-                    aria-label="Previous"
-                    className="grid h-7 w-7 place-items-center rounded-full text-white/70 hover:bg-white/15 transition"
-                  >
-                    ⏮
-                  </button>
-                  <button
-                    type="button"
-                    onClick={togglePlay}
-                    aria-label={isPlaying ? 'Pause' : 'Play'}
-                    className="grid h-8 w-8 place-items-center rounded-full bg-[#f1d449] text-black shadow-md transition hover:scale-105 active:scale-95"
-                  >
-                    {isPlaying ? '⏸' : '▶'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={goNext}
-                    aria-label="Next"
-                    className="grid h-7 w-7 place-items-center rounded-full text-white/70 hover:bg-white/15 transition"
-                  >
-                    ⏭
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      if (onOpenPlaylist) onOpenPlaylist();
-                    }}
-                    className="ml-1 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-[#f1d449] hover:bg-white/20 transition"
-                    title="Choose any song to sync across everyone's devices"
-                  >
-                    Change Song 🎶
-                  </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isBroadcaster ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={goPrev}
+                        aria-label="Previous"
+                        className="grid h-7 w-7 place-items-center rounded-full text-white/70 hover:bg-white/15 transition"
+                        title="Previous Track"
+                      >
+                        ⏮
+                      </button>
+                      <button
+                        type="button"
+                        onClick={togglePlay}
+                        aria-label={isPlaying ? 'Pause' : 'Play'}
+                        className="grid h-8 w-8 place-items-center rounded-full bg-[#f1d449] text-black shadow-md transition hover:scale-105 active:scale-95"
+                        title={isPlaying ? 'Pause broadcast for all' : 'Play broadcast for all'}
+                      >
+                        {isPlaying ? '⏸' : '▶'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={goNext}
+                        aria-label="Next"
+                        className="grid h-7 w-7 place-items-center rounded-full text-white/70 hover:bg-white/15 transition"
+                        title="Next Track"
+                      >
+                        ⏭
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          if (onOpenPlaylist) onOpenPlaylist();
+                        }}
+                        className="ml-1 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-[#f1d449] hover:bg-white/20 transition"
+                        title="Choose any song to stream to everyone"
+                      >
+                        Change Song 🎵
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (activateGroupSync) activateGroupSync();
+                          setSyncToast('Locked into live stream! 📻');
+                          setTimeout(() => setSyncToast(''), 2500);
+                        }}
+                        className="flex items-center gap-1 rounded-full bg-amber-400/20 border border-amber-400/30 px-2.5 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/30 transition active:scale-95"
+                        title="Sync directly to live radio broadcast"
+                      >
+                        <span>🔄</span>
+                        <span>Sync Live</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={togglePlay}
+                        className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white/90 hover:bg-white/20 transition active:scale-95"
+                        title={isPlaying ? 'Mute/Pause on your device only' : 'Listen live'}
+                      >
+                        {isPlaying ? '🔊' : '🔈'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

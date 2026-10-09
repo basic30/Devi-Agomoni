@@ -1,0 +1,17 @@
+{
+  "name": "deviagomoni-audio-server",
+  "version": "1.0.0",
+  "description": "Background Audio Streaming Proxy for Devi Agomoni & Mahalaya Live Radio",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.15.9",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "play-dl": "^1.9.7",
+    "yt-dlp-exec": "^1.0.2"
+  }
+}

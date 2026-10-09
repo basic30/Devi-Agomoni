@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { usePlayer } from '../context/PlayerContext';
+import { useFriendGroup } from '../context/FriendGroupContext';
 import { ChevronDownIcon, DynamicVolumeIcon } from './Icons';
 
 export function formatTimeLabel(seconds) {
@@ -408,8 +409,13 @@ export function PlayerBar({ onOpenPlaylist }) {
 
   const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
   const isPlayDisabled = !track?.videoId && !playlist?.youtubeVideoId && !playlist?.youtubePlaylistId;
+  const effectiveCanSkip = isInGroup ? (isBroadcaster && canSkip) : canSkip;
+  const displayPillLabel = isInGroup
+    ? (isBroadcaster ? '🎙️ YOUR LIVE STREAM' : `📻 LIVE RADIO (${broadcasterName || 'HOST'})`)
+    : (playlist?.pillLabel || 'PUJA RADIO');
 
   function handleSeekFromEvent(e) {
+    if (isInGroup && !isBroadcaster) return;
     const el = barRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -443,7 +449,7 @@ export function PlayerBar({ onOpenPlaylist }) {
         {/* Desktop Pill Row (Side by side) */}
         <div className="hidden sm:block">
           <PlaylistPillRow
-            label={playlist?.pillLabel || 'PUJA RADIO'}
+            label={displayPillLabel}
             onOpen={onOpenPlaylist}
             isDhakPlaying={isDhakPlaying}
             onToggleDhak={toggleDhak}
@@ -469,7 +475,7 @@ export function PlayerBar({ onOpenPlaylist }) {
               <line x1="4" y1="12" x2="15" y2="12" />
               <line x1="4" y1="18" x2="11" y2="18" />
             </svg>
-            {playlist?.pillLabel || 'DURGA PUJA'}
+            {displayPillLabel}
             <ChevronDownIcon />
           </button>
         </div>
@@ -505,7 +511,7 @@ export function PlayerBar({ onOpenPlaylist }) {
 
             <PlayerControls
               isPlaying={isPlaying}
-              canSkip={canSkip}
+              canSkip={effectiveCanSkip}
               playDisabled={isPlayDisabled}
               isShuffle={isShuffle}
               isRepeat={isRepeat}

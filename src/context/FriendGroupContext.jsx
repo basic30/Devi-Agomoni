@@ -37,7 +37,7 @@ function generateInviteCode() {
 }
 
 export function FriendGroupProvider({ children }) {
-  const { registerGroupSync, applyRemoteSync, getCurrentPlayerState } = usePlayer();
+  const { registerGroupSync, applyRemoteSync, getCurrentPlayerState, unlockAudio } = usePlayer();
 
   const [deviceId] = useState(() => getPersistentDeviceId());
   const [nickname, setNicknameState] = useState(() => getPersistentNickname());
@@ -72,6 +72,26 @@ export function FriendGroupProvider({ children }) {
   const hasActivatedGroupSyncRef = useRef(false);
   const broadcastChannelRef = useRef(null);
   const announcedJoinIdsRef = useRef(new Set());
+  const lastRetainedStateRef = useRef(null);
+  const [broadcasterId, setBroadcasterId] = useState(() => activeGroup?.adminId || null);
+  const [broadcasterName, setBroadcasterName] = useState(() => activeGroup?.adminName || '');
+  const broadcasterIdRef = useRef(broadcasterId);
+  const broadcasterNameRef = useRef(broadcasterName);
+  const isBroadcasterRef = useRef(false);
+
+  useEffect(() => {
+    broadcasterIdRef.current = broadcasterId;
+  }, [broadcasterId]);
+
+  useEffect(() => {
+    broadcasterNameRef.current = broadcasterName;
+  }, [broadcasterName]);
+
+  const isBroadcaster = (!broadcasterId || broadcasterId === deviceId || !!activeGroup?.isCurrentUserAdmin);
+
+  useEffect(() => {
+    isBroadcasterRef.current = isBroadcaster;
+  }, [isBroadcaster]);
 
   useEffect(() => {
     hasActivatedGroupSyncRef.current = hasActivatedGroupSync;
@@ -241,24 +261,44 @@ export function FriendGroupProvider({ children }) {
   const activateGroupSync = useCallback(() => {
     setHasActivatedGroupSync(true);
     hasActivatedGroupSyncRef.current = true;
+    if (unlockAudio) unlockAudio();
 
-    if (activeGroupRef.current?.groupId) {
+    // If I am the active broadcaster, my player is the master! Never re-sync or reset myself!
+    if (isBroadcasterRef.current) {
+      return;
+    }
+
+    const curGroup = activeGroupRef.current;
+    if (curGroup?.groupId) {
       const reqPayload = {
         type: 'REQUEST_STATE',
-        groupId: activeGroupRef.current.groupId,
+        groupId: curGroup.groupId,
         senderId: deviceId,
         sentAt: Date.now(),
       };
-      realtimeBus.publish(`devipaksha/group/${activeGroupRef.current.groupId}/events`, reqPayload);
+      realtimeBus.publish(`devipaksha/group/${curGroup.groupId}/events`, reqPayload);
       if (broadcastChannelRef.current) {
         try {
           broadcastChannelRef.current.postMessage(reqPayload);
         } catch (e) {}
       }
-    }
-  }, [deviceId]);
 
-  // Wire automatic music synchronization from local player to group
+      // Instant fast-sync from retained live radio beat on VERY FIRST CLICK!
+      if (lastRetainedStateRef.current && applyRemoteSyncRef.current) {
+        const retained = lastRetainedStateRef.current;
+        const elapsedSec = Math.max(0, (Date.now() - (retained.sentAt || 0)) / 1000);
+        if (elapsedSec < 14400) {
+          const adjustedRetained = {
+            ...retained,
+            position: retained.isPlaying ? ((retained.position || 0) + elapsedSec) : (retained.position || 0),
+          };
+          applyRemoteSyncRef.current(adjustedRetained);
+        }
+      }
+    }
+  }, [deviceId, unlockAudio]);
+
+  // Wire automatic music synchronization from local player to group (Live Radio DJ Control)
   useEffect(() => {
     if (!activeGroup) return;
 
@@ -266,36 +306,49 @@ export function FriendGroupProvider({ children }) {
       setHasActivatedGroupSync(true);
       hasActivatedGroupSyncRef.current = true;
 
-      // When a track switches automatically, only the group coordinator broadcasts AUTO_NEXT
-      // (This prevents multiple devices from sending competing next-track events simultaneously)
-      if (syncData.action === 'AUTO_NEXT') {
-        const curMembers = membersRef.current || [];
-        const isCoordinator = activeGroupRef.current?.isCurrentUserAdmin || (
-          curMembers.length === 0 ||
-          curMembers.filter((m) => m.id).sort((a, b) => a.id.localeCompare(b.id))[0]?.id === deviceId
-        );
-        if (!isCoordinator) {
-          return;
-        }
+      const isCurrentBroadcaster = (!broadcasterIdRef.current || broadcasterIdRef.current === deviceId || activeGroupRef.current?.isCurrentUserAdmin);
+
+      // ONLY THE BROADCASTER (OR ADMIN) CAN CONTROL GROUP PLAYBACK!
+      // Listeners are locked into the radio stream and cannot pause/seek for the group!
+      if (!isCurrentBroadcaster) {
+        console.log('[Radio] Listener action blocked from broadcasting to group');
+        return;
       }
 
-      publishGroupEvent({
-        type: 'MUSIC_SYNC',
-        ...syncData,
-      });
+      // Claim broadcaster role
+      broadcasterIdRef.current = deviceId;
+      setBroadcasterId(deviceId);
+      setBroadcasterName(nicknameRef.current);
 
-      // Retain last played music on MQTT broker so new or offline members automatically start with this song
+      const syncPayload = {
+        type: 'MUSIC_SYNC',
+        broadcasterId: deviceId,
+        broadcasterName: nicknameRef.current,
+        ...syncData,
+      };
+
+      publishGroupEvent(syncPayload);
+
+      // Retain on both last_state and radio_stream
       if (activeGroupRef.current?.groupId) {
+        const streamPayload = {
+          ...syncPayload,
+          type: 'RADIO_BEAT',
+          groupId: activeGroupRef.current.groupId,
+          senderId: deviceId,
+          senderName: nicknameRef.current,
+          sentAt: Date.now(),
+        };
+
+        realtimeBus.publish(
+          `devipaksha/group/${activeGroupRef.current.groupId}/radio_stream`,
+          streamPayload,
+          { retain: true }
+        );
+
         realtimeBus.publish(
           `devipaksha/group/${activeGroupRef.current.groupId}/last_state`,
-          {
-            type: 'MUSIC_SYNC',
-            ...syncData,
-            groupId: activeGroupRef.current.groupId,
-            senderId: deviceId,
-            senderName: nicknameRef.current,
-            sentAt: Date.now(),
-          },
+          streamPayload,
           { retain: true }
         );
       }
@@ -305,29 +358,63 @@ export function FriendGroupProvider({ children }) {
         addMessage({
           id: 'sys-play-' + Date.now(),
           type: 'system',
-          text: `▶ ${nicknameRef.current} played "${syncData.trackTitle || 'Pujo Song'}"`,
+          text: `📻 ${nicknameRef.current} is streaming "${syncData.trackTitle || 'Mahalaya'}" live on radio`,
           timestamp: formatMsgTime(),
         });
       } else if (syncData.action === 'PAUSE') {
         addMessage({
           id: 'sys-pause-' + Date.now(),
           type: 'system',
-          text: `⏸ ${nicknameRef.current} paused the music`,
+          text: `⏸️ ${nicknameRef.current} paused the radio broadcast`,
           timestamp: formatMsgTime(),
         });
       } else if (syncData.action === 'MANUAL_TRACK_CHANGE') {
         addMessage({
           id: 'sys-change-' + Date.now(),
           type: 'system',
-          text: `🎵 ${nicknameRef.current} changed song to "${syncData.trackTitle || 'Pujo Song'}"`,
+          text: `🎵 ${nicknameRef.current} changed radio stream to "${syncData.trackTitle || 'Mahalaya'}"`,
           timestamp: formatMsgTime(),
         });
       }
-      // Note: AUTO_NEXT does not post any chat message!
     });
 
     return unregister;
   }, [activeGroup, registerGroupSync, publishGroupEvent, addMessage, deviceId]);
+
+
+  // Live Radio Broadcaster Heartbeat (Every 3.5s while host is playing)
+  useEffect(() => {
+    if (!activeGroup?.groupId) return;
+
+    const interval = setInterval(() => {
+      const isCurrentBroadcaster = (!broadcasterIdRef.current || broadcasterIdRef.current === deviceId || activeGroupRef.current?.isCurrentUserAdmin);
+      if (isCurrentBroadcaster && getCurrentPlayerStateRef.current) {
+        const curState = getCurrentPlayerStateRef.current();
+        if (curState && curState.isPlaying) {
+          const beatPayload = {
+            type: 'RADIO_BEAT',
+            broadcasterId: deviceId,
+            broadcasterName: nicknameRef.current,
+            groupId: activeGroupRef.current.groupId,
+            senderId: deviceId,
+            senderName: nicknameRef.current,
+            ...curState,
+            sentAt: Date.now(),
+          };
+
+          realtimeBus.publish(
+            `devipaksha/group/${activeGroupRef.current.groupId}/radio_stream`,
+            beatPayload,
+            { retain: true }
+          );
+
+          publishGroupEvent(beatPayload);
+        }
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [activeGroup?.groupId, deviceId, publishGroupEvent]);
 
   // Main listener for group MQTT and BroadcastChannel events
   useEffect(() => {
@@ -337,10 +424,12 @@ export function FriendGroupProvider({ children }) {
     const eventsTopic = `devipaksha/group/${groupId}/events`;
     const verifyTopic = `devipaksha/group/${groupId}/verify`;
     const lastStateTopic = `devipaksha/group/${groupId}/last_state`;
+    const radioStreamTopic = `devipaksha/group/${groupId}/radio_stream`;
 
     realtimeBus.subscribeTopic(eventsTopic);
     realtimeBus.subscribeTopic(verifyTopic);
     realtimeBus.subscribeTopic(lastStateTopic);
+    realtimeBus.subscribeTopic(radioStreamTopic);
 
     // BroadcastChannel for instant inter-tab communication
     let bc = null;
@@ -477,8 +566,41 @@ export function FriendGroupProvider({ children }) {
         });
       }
 
+      // 5b. RADIO_BEAT (Continuous stream heartbeat from broadcaster)
+      else if (event.type === 'RADIO_BEAT' && event.senderId !== deviceId) {
+        if (event.broadcasterId) {
+          setBroadcasterId(event.broadcasterId);
+          broadcasterIdRef.current = event.broadcasterId;
+        }
+        if (event.broadcasterName) {
+          setBroadcasterName(event.broadcasterName);
+          broadcasterNameRef.current = event.broadcasterName;
+        }
+        if (!isBroadcasterRef.current && hasActivatedGroupSyncRef.current && applyRemoteSyncRef.current) {
+          const elapsedSec = Math.max(0, (Date.now() - (event.sentAt || 0)) / 1000);
+          if (elapsedSec < 14400) {
+            const liveState = {
+              ...event,
+              position: event.isPlaying ? ((event.position || 0) + elapsedSec) : (event.position || 0),
+            };
+            applyRemoteSyncRef.current(liveState);
+          }
+        }
+      }
+
       // 5. MUSIC SYNC (from another device)
       else if (event.type === 'MUSIC_SYNC' && event.senderId !== deviceId) {
+        if (isBroadcasterRef.current && event.senderId !== activeGroupRef.current?.adminId) {
+          return;
+        }
+        if (event.broadcasterId) {
+          setBroadcasterId(event.broadcasterId);
+          broadcasterIdRef.current = event.broadcasterId;
+        }
+        if (event.broadcasterName) {
+          setBroadcasterName(event.broadcasterName);
+          broadcasterNameRef.current = event.broadcasterName;
+        }
         // Only apply sync if user opened the group
         if (hasActivatedGroupSyncRef.current) {
           if (applyRemoteSyncRef.current) {
@@ -497,6 +619,15 @@ export function FriendGroupProvider({ children }) {
 
       // 6. LATE JOINER STATE SYNC RESPONSE
       else if (event.type === 'CURRENT_STATE' && event.targetId === deviceId && event.state) {
+        if (isBroadcasterRef.current) return;
+        if (event.broadcasterId) {
+          setBroadcasterId(event.broadcasterId);
+          broadcasterIdRef.current = event.broadcasterId;
+        }
+        if (event.broadcasterName) {
+          setBroadcasterName(event.broadcasterName);
+          broadcasterNameRef.current = event.broadcasterName;
+        }
         if (hasActivatedGroupSyncRef.current) {
           if (applyRemoteSyncRef.current) {
             applyRemoteSyncRef.current(event.state);
@@ -537,6 +668,8 @@ export function FriendGroupProvider({ children }) {
 
       // 7. REQUEST_STATE (Late joiner asking for state)
       else if (event.type === 'REQUEST_STATE' && event.senderId !== deviceId) {
+        // Only broadcaster or admin replies with current state
+        if (!isBroadcasterRef.current) return;
         if (getCurrentPlayerStateRef.current) {
           const curState = getCurrentPlayerStateRef.current();
           publishGroupEvent({
@@ -571,10 +704,35 @@ export function FriendGroupProvider({ children }) {
         handleIncomingGroupEvent(busEvent.data);
       } else if (busEvent.topic === verifyTopic && busEvent.data?.type === 'PING_GROUP') {
         respondToVerifyPing(busEvent.data);
+      } else if (busEvent.topic === radioStreamTopic && busEvent.data) {
+        const beat = busEvent.data;
+        lastRetainedStateRef.current = beat;
+        if (beat.broadcasterId) {
+          setBroadcasterId(beat.broadcasterId);
+          broadcasterIdRef.current = beat.broadcasterId;
+        }
+        if (beat.broadcasterName) {
+          setBroadcasterName(beat.broadcasterName);
+          broadcasterNameRef.current = beat.broadcasterName;
+        }
+        if (!isBroadcasterRef.current && hasActivatedGroupSyncRef.current && applyRemoteSyncRef.current) {
+          const elapsedSec = Math.max(0, (Date.now() - (beat.sentAt || 0)) / 1000);
+          if (elapsedSec < 14400) {
+            const liveState = {
+              ...beat,
+              position: beat.isPlaying ? ((beat.position || 0) + elapsedSec) : (beat.position || 0),
+            };
+            applyRemoteSyncRef.current(liveState);
+          }
+        }
       } else if (busEvent.topic === lastStateTopic && busEvent.data) {
+        lastRetainedStateRef.current = busEvent.data;
         // Retained state from broker when member opens site while others are offline
-        if (hasActivatedGroupSyncRef.current && applyRemoteSyncRef.current && (busEvent.data.action === 'TRACK_CHANGE' || busEvent.data.action === 'PLAY')) {
-          applyRemoteSyncRef.current(busEvent.data);
+        if (hasActivatedGroupSyncRef.current && applyRemoteSyncRef.current) {
+          const act = busEvent.data.action;
+          if (act === 'PLAY' || act === 'MANUAL_TRACK_CHANGE' || act === 'AUTO_NEXT' || act === 'SEEK' || act === 'TRACK_CHANGE') {
+            applyRemoteSyncRef.current(busEvent.data);
+          }
         }
       }
     });
@@ -612,6 +770,7 @@ export function FriendGroupProvider({ children }) {
       realtimeBus.unsubscribeTopic(eventsTopic);
       realtimeBus.unsubscribeTopic(verifyTopic);
       realtimeBus.unsubscribeTopic(lastStateTopic);
+      realtimeBus.unsubscribeTopic(radioStreamTopic);
       if (bc) {
         bc.close();
         broadcastChannelRef.current = null;
@@ -659,6 +818,7 @@ export function FriendGroupProvider({ children }) {
 
   // Join an existing group with invite code (Works even if no one is currently online!)
   const joinGroup = useCallback(async (codeRaw, joinerNickname) => {
+    if (unlockAudio) unlockAudio();
     if (!codeRaw) return { error: 'Please enter an invite code.' };
 
     let normalizedCode = codeRaw.trim().toUpperCase().replace(/\s+/g, '');
@@ -788,6 +948,30 @@ export function FriendGroupProvider({ children }) {
     setHasActivatedGroupSync(true);
     hasActivatedGroupSyncRef.current = true;
 
+    // Immediately request state from live peers and apply retained state
+    const reqPayload = {
+      type: 'REQUEST_STATE',
+      groupId: normalizedCode,
+      senderId: deviceId,
+      sentAt: Date.now(),
+    };
+    realtimeBus.publish(`devipaksha/group/${normalizedCode}/events`, reqPayload);
+    if (broadcastChannelRef.current) {
+      try { broadcastChannelRef.current.postMessage(reqPayload); } catch (e) {}
+    }
+
+    if (lastRetainedStateRef.current && applyRemoteSyncRef.current) {
+      const retained = lastRetainedStateRef.current;
+      const elapsedSec = (Date.now() - (retained.sentAt || 0)) / 1000;
+      if (elapsedSec < 14400) {
+        const adjustedRetained = {
+          ...retained,
+          position: retained.isPlaying ? ((retained.position || 0) + elapsedSec) : (retained.position || 0),
+        };
+        applyRemoteSyncRef.current(adjustedRetained);
+      }
+    }
+
     // If joined while offline, add friendly system hint message
     if (result.groupInfo?.isOfflineJoin) {
       setTimeout(() => {
@@ -801,7 +985,7 @@ export function FriendGroupProvider({ children }) {
     }
 
     return { success: true, group: groupObj };
-  }, [deviceId, updateNickname, addMessage]);
+  }, [deviceId, updateNickname, addMessage, unlockAudio]);
 
   // Leave active group
   const leaveGroupInternal = useCallback((broadcastLeave = true) => {
@@ -903,6 +1087,10 @@ export function FriendGroupProvider({ children }) {
     isSyncConnected,
     hasActivatedGroupSync,
     activateGroupSync,
+    broadcasterId,
+    broadcasterName,
+    isBroadcaster,
+    isLiveRadioActive: !!broadcasterId,
     updateNickname,
     createGroup,
     joinGroup,

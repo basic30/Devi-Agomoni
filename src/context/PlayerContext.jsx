@@ -54,6 +54,27 @@ function createBackgroundHeartbeatWorker(callback) {
   };
 }
 
+let nativeAudioElement = null;
+
+function getAudioProxyUrl() {
+  if (typeof window === 'undefined') return '';
+  return (
+    localStorage.getItem('devi_audio_proxy_url') ||
+    window.__DEVI_AUDIO_PROXY_URL__ ||
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_AUDIO_PROXY_URL) ||
+    ''
+  );
+}
+
+function initNativeAudio() {
+  if (typeof window === 'undefined') return null;
+  if (!nativeAudioElement) {
+    nativeAudioElement = new Audio();
+    nativeAudioElement.preload = 'auto';
+  }
+  return nativeAudioElement;
+}
+
 let silentAudioElement = null;
 
 function acquireAudioFocus() {
@@ -245,6 +266,55 @@ export function PlayerProvider({ children }) {
 
   const workerRef = useRef(null);
 
+
+  // Native HTML5 Audio event wiring (Provides 100% background play with screen locked)
+  useEffect(() => {
+    const audio = initNativeAudio();
+    if (!audio) return;
+
+    const onTimeUpdate = () => {
+      if (getAudioProxyUrl()) {
+        setCurrentTime(audio.currentTime);
+      }
+    };
+    const onDurationChange = () => {
+      if (getAudioProxyUrl() && audio.duration) {
+        setDuration(audio.duration);
+      }
+    };
+    const onPlay = () => {
+      if (getAudioProxyUrl()) {
+        setIsPlaying(true);
+        acquireAudioFocus();
+      }
+    };
+    const onPause = () => {
+      if (getAudioProxyUrl()) {
+        setIsPlaying(false);
+      }
+    };
+    const onEnded = () => {
+      if (getAudioProxyUrl()) {
+        setIsPlaying(false);
+        nextTrackHandlerRef.current({ isManual: false });
+      }
+    };
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('durationchange', onDurationChange);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('ended', onEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('durationchange', onDurationChange);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('ended', onEnded);
+    };
+  }, []);
+
   // Background Web Worker heartbeat (prevents main thread timer throttling on Android Chrome screen off)
   useEffect(() => {
     workerRef.current = createBackgroundHeartbeatWorker(() => {
@@ -429,7 +499,7 @@ export function PlayerProvider({ children }) {
       if (pendingActionRef.current) {
         const action = pendingActionRef.current;
         pendingActionRef.current = null;
-        executePlayAction(action.pKey, action.tIndex, action.autoplay, player);
+        executePlayAction(action.pKey, action.tIndex, action.autoplay, player, action.customStartSec);
       }
       syncLivePlaylistFromPlayer(player);
     };
@@ -679,13 +749,50 @@ export function PlayerProvider({ children }) {
   function executePlayAction(pKey, tIndex, autoplay, playerInstance, customStartSec) {
     lastLoadedTimeRef.current = Date.now();
     const player = playerInstance || getPlayer();
-    if (!player) return;
+    if (!player || typeof player.loadVideoById !== 'function') {
+      pendingActionRef.current = { pKey, tIndex, autoplay, customStartSec };
+      if (containerRef.current) initPlayer(containerRef.current);
+      return;
+    }
 
     const targetPlaylist = playlists[pKey];
     const targetTrack = targetPlaylist?.tracks?.[tIndex] || targetPlaylist?.tracks?.[0];
 
     const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
     const startSec = customStartSec != null ? customStartSec : (targetTrack?.start ?? 0);
+
+    const proxyBase = getAudioProxyUrl();
+    if (proxyBase && videoId) {
+      const streamUrl = `${proxyBase.replace(/\/$/, '')}/api/stream/${videoId}`;
+      const audio = initNativeAudio();
+      if (audio) {
+        if (currentVideoIdRef.current !== videoId || audio.src !== streamUrl) {
+          currentVideoIdRef.current = videoId;
+          audio.src = streamUrl;
+        }
+        if (startSec > 0 && Math.abs(audio.currentTime - startSec) > 1.5) {
+          try { audio.currentTime = startSec; } catch (e) {}
+        }
+        audio.volume = (volumeRef.current || 100) / 100;
+        audio.muted = !!isMutedRef.current;
+        if (autoplay) {
+          audio.play().then(() => {
+            setIsPlaying(true);
+            acquireAudioFocus();
+          }).catch((err) => {
+            console.warn('Native audio play notice:', err);
+            if (player && typeof player.loadVideoById === 'function') {
+              player.loadVideoById({ videoId, startSeconds: startSec });
+            }
+          });
+        } else {
+          audio.pause();
+          setIsPlaying(false);
+        }
+        setCurrentTime(startSec || 0);
+        return;
+      }
+    }
 
     try {
       if (targetPlaylist?.sourceType === 'youtube_playlist' && targetPlaylist?.youtubePlaylistId && !targetTrack?.videoId) {
@@ -990,6 +1097,23 @@ export function PlayerProvider({ children }) {
     };
   }, []);
 
+  const unlockAudio = useCallback(() => {
+    acquireAudioFocus();
+    const player = getPlayer();
+    if (player) {
+      try {
+        if (typeof player.unMute === 'function') {
+          player.unMute();
+        }
+        if (typeof player.setVolume === 'function') {
+          player.setVolume(volumeRef.current || 100);
+        }
+      } catch (e) {}
+    } else if (containerRef.current) {
+      initPlayer(containerRef.current);
+    }
+  }, []);
+
   const getCurrentPlayerState = useCallback(() => {
     const player = getPlayer();
     const curTime = (player && typeof player.getCurrentTime === 'function') ? player.getCurrentTime() : currentTimeRef.current;
@@ -1024,17 +1148,48 @@ export function PlayerProvider({ children }) {
     const targetTrack = targetPlaylist?.tracks?.[remoteTIndex] || targetPlaylist?.tracks?.[0];
     const videoId = targetTrack?.videoId || targetPlaylist?.youtubeVideoId;
 
+    if (!player || typeof player.loadVideoById !== 'function') {
+      // YouTube player is still initializing! Store in pendingActionRef and update React state immediately
+      pendingActionRef.current = {
+        pKey: remotePKey,
+        tIndex: remoteTIndex,
+        autoplay: remoteIsPlaying,
+        customStartSec: targetSec,
+      };
+      if (remotePKey) setPlaylistKey(remotePKey);
+      if (remoteTIndex != null) setTrackIndex(remoteTIndex);
+      setCurrentTime(targetSec);
+      if (remoteIsPlaying) {
+        setIsPlaying(true);
+        acquireAudioFocus();
+      }
+      if (containerRef.current) {
+        initPlayer(containerRef.current);
+      }
+      setTimeout(() => {
+        isRemoteSyncRef.current = false;
+      }, 3500);
+      return;
+    }
+
     if (remotePKey && (remotePKey !== activePlaylistKeyRef.current || remoteTIndex !== trackIndexRef.current || currentVideoIdRef.current !== videoId)) {
       setPlaylistKey(remotePKey);
       setTrackIndex(remoteTIndex);
       executePlayAction(remotePKey, remoteTIndex, remoteIsPlaying, player, targetSec);
+      setCurrentTime(targetSec);
+      if (remoteIsPlaying) {
+        setIsPlaying(true);
+        acquireAudioFocus();
+      }
     } else if (player) {
       if (Math.abs((player.getCurrentTime?.() || 0) - targetSec) > 1.8) {
         try { player.seekTo(targetSec, true); } catch (e) {}
       }
+      setCurrentTime(targetSec);
       if (remoteIsPlaying) {
         try { player.playVideo(); } catch (e) {}
         setIsPlaying(true);
+        acquireAudioFocus();
       } else {
         try { player.pauseVideo(); } catch (e) {}
         setIsPlaying(false);
